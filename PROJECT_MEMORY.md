@@ -359,3 +359,166 @@ In a new ChatGPT conversation, give this repository URL and say:
 
 > Read `PROJECT_MEMORY.md` and `docs/SESSION_2026-09-29.md` first, inspect the current repository, and continue from the recorded next steps. Do not restart the investigation from scratch.
 
+
+
+## Mobile/browser background lifecycle and TTS architecture — follow-up
+
+The user reported a second, separate reliability problem beyond MultiTTS request latency:
+
+- when SillyTavern is opened in an Android browser and the browser is backgrounded / the user returns to the home screen, text generation can sometimes stop;
+- TTS is even more likely to stop;
+- after TTS stops, pressing SillyTavern's TTS playback control can restart narration from the beginning instead of resuming.
+
+This is now treated as **two distinct engineering problems**:
+
+1. **background chat generation survival**
+2. **TTS generation/playback continuity and resume UX**
+
+Do not conflate them.
+
+### Android/browser lifecycle is a real upstream constraint
+
+Chrome's Page Lifecycle documentation confirms that hidden pages may become frozen or discarded. In the frozen state, freezable JavaScript tasks such as timers and fetch callbacks are suspended. On mobile, an OS can also stop applications to reclaim resources.
+
+Relevant Chrome references:
+
+- https://developer.chrome.com/docs/web-platform/page-lifecycle-api/
+- https://developer.chrome.com/blog/timer-throttling-in-chrome-88/
+
+Chrome also documents that pages observed playing audio are less likely to be discarded except under extreme resource pressure. However, Chrome's timer-throttling documentation explicitly says a **silent audio track does not count as making noise** for its "recently audible" timer exemption. Therefore any silence-player workaround must be treated as a mitigation, not a guarantee.
+
+### SillyTavern has an official Silence Player mitigation
+
+SillyTavern's official content index includes:
+
+- repository: https://github.com/SillyTavern/Extension-Silence
+- description: "Can help if the browser tab is being killed in a background."
+
+The current extension is intentionally tiny: it adds a looping HTML audio element playing a bundled silence.m4a.
+
+Community reports in 2025-2026 repeatedly recommend it for Android background generation, but reports are mixed: some users say it helps with app/tab switching, while others still see failures after minutes or when the phone locks.
+
+Conclusion: test it before building anything larger, but do not design the project around it as a guaranteed keep-alive mechanism.
+
+### SillyTavern generation can intentionally abort when the browser connection closes
+
+Current SillyTavern backend source for many chat-completion providers creates an AbortController and attaches it to the client request socket close event, for example:
+
+```js
+request.socket.on('close', function () {
+    controller.abort();
+});
+```
+
+This pattern appears across multiple provider paths in:
+
+https://github.com/SillyTavern/SillyTavern/blob/release/src/endpoints/backends/chat-completions.js
+
+Therefore if Android backgrounding causes the browser connection/socket to close, upstream model generation may be intentionally aborted by SillyTavern.
+
+Important architectural consequence:
+
+> A browser-only TTS extension cannot make chat generation survive a dead browser connection.
+
+A custom narrator can improve TTS after text exists, but it cannot solve this upstream generation-lifecycle problem.
+
+### SillyTavern's TTS playback button is Stop, not Pause
+
+Current TTS core explicitly describes its control as a full stop rather than a pause. The stop/reset path:
+
+- cancels system TTS;
+- clears current TTS/audio jobs;
+- clears both queues;
+- resets the audio element to time 0;
+- clears the audio source.
+
+When playback is idle and the user presses the control again, SillyTavern queues the latest message again.
+
+This explains the user's observed behavior: after interruption, pressing play can restart the last message from the beginning. It is consistent with the current core design, not specific to MultiTTS.
+
+Source:
+
+https://github.com/SillyTavern/SillyTavern/blob/release/public/scripts/extensions/tts/index.js
+
+Official docs also call the control the lower-right **Stop** button:
+
+https://docs.sillytavern.app/extensions/tts/
+
+### Current upstream also recognizes the gapless-player problem
+
+Open SillyTavern issue #6031 (2026-09-13):
+
+https://github.com/SillyTavern/SillyTavern/issues/6031
+
+Title:
+
+`[FEATURE_REQUEST] Gapless playback for streaming TTS providers (mechanism already exists in-tree)`
+
+The report independently identifies the same core behavior we found:
+
+- the player is strictly sequential;
+- the next chunk is not taken until the current one ends;
+- repeated audio-element `.src` changes cause fresh decode / `canplay` delays on mobile;
+- provider-side prefetch alone cannot remove those source-swap gaps.
+
+The issue proposes moving an existing AudioContext + AudioWorklet PCM sink from provider-specific code into the TTS core.
+
+For our MultiTTS path, this mechanism is **not directly usable yet**, because the remote SillyTavern page cannot CORS-read MultiTTS's WAV response. AudioWorklet/PCM buffering requires readable audio bytes (or a different local bridge), while our proven path is an opaque direct media URL.
+
+### Native clients show what a robust background solution actually requires
+
+TauriTavern is a useful architecture reference, not a recommendation to migrate blindly.
+
+Its Android implementation explicitly moves chat-completion ownership outside the WebView:
+
+- a native Android `dataSync` Foreground Service is started for generation tasks;
+- Rust `ChatCompletionService` owns the task and background execution lease;
+- the WebView only consumes stream events;
+- its documentation explicitly says the native task lifecycle must not be tied to WebView callbacks, because the WebView may be suspended.
+
+Reference:
+
+https://github.com/Darkatse/TauriTavern/blob/main/docs/AndroidDevelopment.md
+
+This matches the general Android pattern: truly reliable background execution requires a native foreground-service/app layer or a server-side persistent job, not just more JavaScript inside a browser tab.
+
+### Revised architecture boundary
+
+The earlier recommendation "do not create a parallel custom playback queue" is now qualified:
+
+- **For the thin MultiTTS provider:** still avoid adding a second player/queue unless testing proves it necessary.
+- **As a separate narrator/player extension:** a custom queue is a legitimate design option if we deliberately want better TTS UX than SillyTavern core currently provides.
+
+A separate narrator/player extension could own:
+
+- text segmentation;
+- controlled MultiTTS pre-generation/preloading;
+- ordered playback;
+- true pause/resume state;
+- current chunk and current-time persistence;
+- retry/skip behavior;
+- Media Session integration;
+- independent diagnostics.
+
+But because it still runs inside the same browser page, it **cannot guarantee survival when Chrome freezes/discards the page or the OS kills the browser**.
+
+To solve background chat generation as well, the long-running generation task must move outside the page: native Android foreground service / native wrapper / persistent server-side job.
+
+### Low-risk test order before major redevelopment
+
+1. Test SillyTavern's official Silence Player.
+2. Give the browser unrestricted/background battery permission where Android/OEM permits it.
+3. Give MultiTTS its own background/keep-alive permissions where available.
+4. Test four states separately:
+   - another browser tab;
+   - another app/home screen;
+   - screen off/lock;
+   - return after several minutes.
+5. Record separately whether:
+   - chat generation survives;
+   - MultiTTS service survives;
+   - current audio survives;
+   - next TTS chunk starts.
+6. Only after that, decide whether to build a separate resume-capable narrator/player.
+7. If **background chat generation itself** must be guaranteed, evaluate a native-wrapper/foreground-service architecture rather than trying to solve it solely inside the browser plugin.
+
