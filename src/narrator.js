@@ -530,7 +530,7 @@ export class NarratorController {
     async handleHostMutation(kind) {
         if (!this.session) return;
         if (kind === 'deleted') {
-            await this.stop({ clearPending: false });
+            await this.stop({ clearPending: true });
             return;
         }
         await this.reconcileActiveSource();
