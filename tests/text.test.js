@@ -2,20 +2,41 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeNarrationText, segmentNarrationText, sha256Hex } from '../src/text.js';
 
-test('normalization preserves paragraph boundaries and removes image markdown', () => {
-    const value = normalizeNarrationText('  第一段。\n\n![x](a.png)\n第二段。  ');
-    assert.equal(value, '第一段。\n\n\n第二段。'.replace(/\n{3,}/, '\n\n'));
+test('normalization preserves line boundaries and removes image markdown', () => {
+    const value = normalizeNarrationText('  第一行。\n\n![x](a.png)\n第二行。  ');
+    assert.equal(value, '第一行。\n\n\n第二行。');
 });
 
-test('segmentation prefers paragraph and punctuation boundaries', () => {
-    const segments = segmentNarrationText('第一段很短。\n\n第二段有一句话，接着还有一句话！最后结束。', 12);
-    assert.deepEqual(segments[0], '第一段很短。');
-    assert.ok(segments.every(segment => Array.from(segment).length <= 20));
-    assert.equal(segments.join('').replace(/\s/g, ''), '第一段很短。第二段有一句话，接着还有一句话！最后结束。');
+test('every non-empty source line is a hard segment boundary', () => {
+    assert.deepEqual(segmentNarrationText('甲\n乙\n丙', 1000), ['甲', '乙', '丙']);
+});
+
+test('long lines prefer the rightmost complete sentence before weaker punctuation', () => {
+    const text = '第一句完整。第二句还没有结束，但这里已经接近限制仍然继续';
+    const segments = segmentNarrationText(text, 20);
+    assert.equal(segments[0], '第一句完整。');
+    assert.equal(segments.join(''), text);
+});
+
+test('long sentences use a late clause boundary before hard cutting', () => {
+    const text = '这是一条没有句号但内容非常长的句子，需要继续表达很多内容，最后才结束';
+    const segments = segmentNarrationText(text, 20);
+    assert.ok(segments.length > 1);
+    assert.ok(segments[0].endsWith('，'));
+    assert.equal(segments.join(''), text);
+});
+
+test('segmentation supports a configured limit of 1000 code points', () => {
+    const text = '字'.repeat(999);
+    assert.deepEqual(segmentNarrationText(text, 1000), [text]);
+    const longer = '字'.repeat(1001);
+    const segments = segmentNarrationText(longer, 1000);
+    assert.equal(Array.from(segments[0]).length, 1000);
+    assert.equal(Array.from(segments[1]).length, 1);
 });
 
 test('segmentation counts Unicode code points instead of UTF-16 units', () => {
-    const segments = segmentNarrationText('😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀', 20);
+    const segments = segmentNarrationText('😀'.repeat(21), 20);
     assert.equal(segments.length, 2);
     assert.equal(Array.from(segments[0]).length, 20);
     assert.equal(Array.from(segments[1]).length, 1);
