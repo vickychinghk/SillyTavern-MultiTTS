@@ -84,6 +84,8 @@ export class NarratorUI {
           <div class="inline-drawer-content">
             <label class="checkbox_label"><input type="checkbox" data-setting="enabled"> <span>启用旁白</span></label>
             <label class="checkbox_label"><input type="checkbox" data-setting="autoNarrate"> <span>自动朗读已完成的助手回复</span></label>
+            <label class="checkbox_label"><input type="checkbox" data-setting="skipCodeBlocks"> <span>跳过代码块</span></label>
+            <label class="checkbox_label"><input type="checkbox" data-setting="skipTagBlocks"> <span>跳过标签块里的内容（&lt;tag&gt;跳过这里&lt;/tag&gt;）</span></label>
 
             <label for="mtn-endpoint">MultiTTS 地址</label>
             <input id="mtn-endpoint" class="text_pole" data-setting="endpoint" type="text" inputmode="url">
@@ -195,6 +197,23 @@ export class NarratorUI {
         this.settingsStore.update({ [key]: value });
     }
 
+    createMessagePlayButton(nativeNarrate, variant) {
+        const button = nativeNarrate?.cloneNode(true) || this.document.createElement('div');
+        button.removeAttribute('id');
+        button.removeAttribute('data-i18n');
+        button.removeAttribute('onclick');
+        button.style.removeProperty('display');
+        button.hidden = false;
+        button.tabIndex = 0;
+        button.setAttribute('role', 'button');
+        button.classList.remove('mes_narrate');
+        button.classList.add('mtn-message-play', 'mes_button', variant);
+        if (!button.matches('.fa-solid, .fa-regular')) button.classList.add('fa-solid', 'fa-bullhorn');
+        button.title = '用 MultiTTS 播放此消息';
+        button.setAttribute('aria-label', '用 MultiTTS 播放此消息');
+        return button;
+    }
+
     syncMessageButtons() {
         if (!this.settingsStore.get().enabled) {
             for (const button of this.document.querySelectorAll('.mtn-message-play')) button.remove();
@@ -211,35 +230,30 @@ export class NarratorUI {
         const message = this.document.querySelector(`#chat > .mes[mesid="${id}"]`);
         if (!message) return;
 
-        const existing = message.querySelector('.mtn-message-play');
         if (!this.settingsStore.get().enabled || !this.host.getMessage(id)) {
-            existing?.remove();
+            for (const button of message.querySelectorAll('.mtn-message-play')) button.remove();
             return;
         }
-        if (existing) return;
 
         const buttons = message.querySelector('.mes_buttons');
-        if (!buttons) return;
-        const nativeNarrate = buttons.querySelector('.mes_narrate');
-        const button = nativeNarrate?.cloneNode(true) || this.document.createElement('div');
-        button.removeAttribute('id');
-        button.removeAttribute('data-i18n');
-        button.removeAttribute('onclick');
-        button.style.removeProperty('display');
-        button.hidden = false;
-        button.tabIndex = 0;
-        button.setAttribute('role', 'button');
-        button.classList.remove('mes_narrate');
-        button.classList.add('mtn-message-play', 'mes_button');
-        if (!button.matches('.fa-solid, .fa-regular')) button.classList.add('fa-solid', 'fa-volume-high');
-        button.title = '用 MultiTTS 播放此消息';
-        button.setAttribute('aria-label', '用 MultiTTS 播放此消息');
+        const nativeNarrate = buttons?.querySelector('.mes_narrate');
 
-        if (nativeNarrate) nativeNarrate.insertAdjacentElement('afterend', button);
-        else {
-            const edit = buttons.querySelector('.mes_edit');
-            if (edit) edit.insertAdjacentElement('beforebegin', button);
-            else buttons.prepend(button);
+        if (buttons && !message.querySelector('.mtn-message-play-actions')) {
+            const button = this.createMessagePlayButton(nativeNarrate, 'mtn-message-play-actions');
+            if (nativeNarrate) nativeNarrate.insertAdjacentElement('afterend', button);
+            else {
+                const edit = buttons.querySelector('.mes_edit');
+                if (edit) edit.insertAdjacentElement('beforebegin', button);
+                else buttons.prepend(button);
+            }
+        }
+
+        const nameText = message.querySelector('.mes_block .ch_name .name_text, .ch_name .name_text');
+        if (nameText && !message.querySelector('.mtn-message-play-name')) {
+            nameText.insertAdjacentElement(
+                'afterend',
+                this.createMessagePlayButton(nativeNarrate, 'mtn-message-play-name'),
+            );
         }
     }
 
