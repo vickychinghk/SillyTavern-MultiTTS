@@ -60,6 +60,8 @@ export class NarratorController {
             canPause: this.status === 'playing',
             canResume: ['paused', 'action-required'].includes(this.status),
             canStop: Boolean(this.session),
+            canPrevious: Boolean(this.session && this.session.currentIndex > 0),
+            canNext: Boolean(this.session && this.session.currentIndex < this.session.segments.length - 1),
             canSkip: Boolean(this.session && ['playing', 'buffering', 'action-required', 'paused'].includes(this.status)),
             canRetry: this.status === 'action-required' && ['segment-error', 'playback-error', 'circuit-breaker'].includes(this.reason),
         };
@@ -107,14 +109,20 @@ export class NarratorController {
     }
 
     async narrateLatestManual() {
-        const settings = this.settingsStore.get();
-        if (!settings.enabled) {
+        return this.narrateManual(this.host.getLatestAssistantMessage());
+    }
+
+    async narrateMessage(index) {
+        return this.narrateManual(this.host.getMessage(index));
+    }
+
+    async narrateManual(candidate) {
+        if (!this.settingsStore.get().enabled) {
             this.status = 'action-required';
             this.reason = 'disabled';
             this.emit();
             return false;
         }
-        const candidate = this.host.getLatestAssistantMessage();
         if (!candidate) {
             this.status = 'action-required';
             this.reason = 'no-message';
@@ -457,6 +465,58 @@ export class NarratorController {
         return true;
     }
 
+    previous() {
+        const session = this.session;
+        if (!session || session.currentIndex <= 0) return false;
+
+        const current = session.segments[session.currentIndex];
+        if (current?.slot && current.state === 'playing') {
+            current.slot.pause();
+            current.slot.seek(0);
+            current.state = 'ready';
+        } else if (current?.state === 'loading') {
+            current.slot?.dispose();
+            current.slot = null;
+            current.state = 'queued';
+            current.attempts = 0;
+            current.loadStartedAt = null;
+            current.readyAt = null;
+        } else if (current?.state === 'error') {
+            current.slot?.dispose();
+            current.slot = null;
+            current.state = 'queued';
+            current.attempts = 0;
+        }
+
+        const targetIndex = session.currentIndex - 1;
+        const target = session.segments[targetIndex];
+        target.slot?.dispose();
+        target.slot = null;
+        target.state = 'queued';
+        target.attempts = 0;
+        target.loadStartedAt = null;
+        target.readyAt = null;
+
+        session.currentIndex = targetIndex;
+        session.currentTime = 0;
+        session.resumeTime = 0;
+        session.playRequestIndex = null;
+        session.breakerOpen = false;
+        session.recentFailures = [];
+        this.status = 'buffering';
+        this.reason = null;
+        this.record('segment-previous', { index: targetIndex });
+        this.writeCheckpoint();
+        this.fillWindow();
+        this.tryPlay();
+        this.emit();
+        return true;
+    }
+
+    next() {
+        return this.skip();
+    }
+
     skip() {
         const session = this.session;
         if (!session) return false;
@@ -693,11 +753,12 @@ export class NarratorController {
         try { endpoint = normalizeEndpoint(settings.endpoint); } catch {}
         return JSON.stringify({
             product: 'MultiTTS Narrator',
-            version: '2.0.0-alpha.1',
+            version: '2.0.0-alpha.2',
             generatedAt: new Date(this.now()).toISOString(),
             state: this.getSnapshot(),
             settings: {
                 endpoint,
+                sendProsodyParams: settings.sendProsodyParams,
                 speed: settings.speed,
                 volume: settings.volume,
                 pitch: settings.pitch,

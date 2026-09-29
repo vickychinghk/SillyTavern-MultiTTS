@@ -19,13 +19,18 @@ export async function init() {
         checkpointStore: new CheckpointStore(),
         mediaFactory: createAudioSlotFactory(),
     });
-    const ui = new NarratorUI({ settingsStore, controller });
+    const ui = new NarratorUI({ host, settingsStore, controller });
     ui.mount();
 
     const unsubscribeHost = host.subscribe({
         onAssistantFinalized: candidate => controller.handleAssistantFinalized(candidate),
         onMutation: kind => controller.handleHostMutation(kind),
-        onChatChanged: () => controller.handleChatChanged(),
+        onMessageRendered: index => ui.syncMessageButton(index),
+        onMessagesLoaded: () => ui.syncMessageButtons(),
+        onChatChanged: () => {
+            controller.handleChatChanged();
+            queueMicrotask(() => ui.syncMessageButtons());
+        },
     });
     const uninstallMediaSession = installMediaSession(controller);
     const onVisibility = () => controller.onVisibilityChange(document.visibilityState);

@@ -8,6 +8,8 @@ const eventTypes = {
     GENERATION_ENDED: 'generation_ended',
     GENERATION_STOPPED: 'generation_stopped',
     MESSAGE_RECEIVED: 'message_received',
+    CHARACTER_MESSAGE_RENDERED: 'character_message_rendered',
+    MORE_MESSAGES_LOADED: 'more_messages_loaded',
     MESSAGE_EDITED: 'message_edited',
     MESSAGE_UPDATED: 'message_updated',
     MESSAGE_SWIPED: 'message_swiped',
@@ -66,4 +68,19 @@ test('disposing subscriptions prevents duplicate callbacks', async () => {
     eventSource.emit(eventTypes.MESSAGE_RECEIVED, 1);
     await Promise.resolve();
     assert.equal(count, 0);
+});
+
+
+test('message render events are exposed for host-native message controls', () => {
+    const { eventSource, host } = setup();
+    const rendered = [];
+    let loaded = 0;
+    host.subscribe({
+        onMessageRendered: index => rendered.push(index),
+        onMessagesLoaded: () => loaded++,
+    });
+    eventSource.emit(eventTypes.CHARACTER_MESSAGE_RENDERED, 3);
+    eventSource.emit(eventTypes.MORE_MESSAGES_LOADED);
+    assert.deepEqual(rendered, [3]);
+    assert.equal(loaded, 1);
 });

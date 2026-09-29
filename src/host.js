@@ -71,7 +71,7 @@ export class SillyTavernHost {
         };
     }
 
-    subscribe({ onAssistantFinalized, onMutation, onChatChanged }) {
+    subscribe({ onAssistantFinalized, onMutation, onChatChanged, onMessageRendered, onMessagesLoaded }) {
         this.disposeSubscriptions();
         const { eventSource, eventTypes } = this.getContext();
         const on = (event, handler) => {
@@ -102,6 +102,8 @@ export class SillyTavernHost {
         on(eventTypes.GENERATION_ENDED, () => { this.generationActive = false; scheduleFinal({ requireGenerationChange: true }); });
         on(eventTypes.GENERATION_STOPPED, () => { this.generationActive = false; scheduleFinal({ requireGenerationChange: true }); });
         on(eventTypes.MESSAGE_RECEIVED, () => scheduleFinal());
+        on(eventTypes.CHARACTER_MESSAGE_RENDERED, messageId => onMessageRendered?.(messageId));
+        on(eventTypes.MORE_MESSAGES_LOADED, () => onMessagesLoaded?.());
 
         const mutationEvents = [
             ['edited', eventTypes.MESSAGE_EDITED],

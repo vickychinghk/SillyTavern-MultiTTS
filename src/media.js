@@ -21,9 +21,11 @@ export function isLoopbackEndpoint(input) {
 export function buildForwardUrl(endpoint, text, settings) {
     const url = new URL(`${normalizeEndpoint(endpoint)}/forward`);
     url.searchParams.set('text', String(text ?? ''));
-    url.searchParams.set('speed', String(settings.speed));
-    url.searchParams.set('volume', String(settings.volume));
-    url.searchParams.set('pitch', String(settings.pitch));
+    if (settings.sendProsodyParams !== false) {
+        url.searchParams.set('speed', String(settings.speed));
+        url.searchParams.set('volume', String(settings.volume));
+        url.searchParams.set('pitch', String(settings.pitch));
+    }
     return url.toString();
 }
 
@@ -108,13 +110,14 @@ export function createAudioSlotFactory(audioFactory) {
 export function installMediaSession(controller, mediaSession = globalThis.navigator?.mediaSession) {
     if (!mediaSession?.setActionHandler) return () => {};
     try {
-        if (globalThis.MediaMetadata) mediaSession.metadata = new MediaMetadata({ title: 'MultiTTS Narrator', artist: 'SillyTavern' });
+        if (globalThis.MediaMetadata) mediaSession.metadata = new MediaMetadata({ title: 'MultiTTS 旁白', artist: 'SillyTavern' });
     } catch {}
     const actions = {
         play: () => controller.resume(),
         pause: () => controller.pause(),
         stop: () => controller.stop(),
-        nexttrack: () => controller.skip(),
+        previoustrack: () => controller.previous(),
+        nexttrack: () => controller.next(),
     };
     for (const [action, handler] of Object.entries(actions)) {
         try { mediaSession.setActionHandler(action, handler); } catch {}

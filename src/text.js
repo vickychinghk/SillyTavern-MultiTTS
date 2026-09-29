@@ -1,5 +1,8 @@
-const STRONG_BREAK = /[。！？!?；;]/;
-const WEAK_BREAK = /[，,、：:]/;
+const SENTENCE_END = /[。！？!?…]/u;
+const CLAUSE_BREAK = /[；;：:]/u;
+const WEAK_BREAK = /[，,、]/u;
+const CLOSER = /["'”’」』）》】〉]/u;
+const FALLBACK_RATIO = 0.6;
 
 export function normalizeNarrationText(input) {
     return String(input ?? '')
@@ -8,74 +11,70 @@ export function normalizeNarrationText(input) {
         .replace(/<img\b[^>]*>/gi, '')
         .replace(/[ \t]+/g, ' ')
         .replace(/ *\n */g, '\n')
-        .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
 
-function codePoints(text) {
-    return Array.from(text);
-}
+const codePoints = text => Array.from(text);
 
-function findBreak(chars, start, end, minBreak, matcher) {
-    for (let i = end - 1; i >= minBreak; i--) {
-        if (matcher.test(chars[i])) return i + 1;
+function findBreak(chars, start, end, matcher, min = start) {
+    for (let i = end - 1; i >= min; i--) {
+        if (!matcher.test(chars[i])) continue;
+        let cut = i + 1;
+        while (cut < end && CLOSER.test(chars[cut])) cut++;
+        return cut;
     }
     return -1;
 }
 
-function splitParagraph(paragraph, maxChars) {
-    const chars = codePoints(paragraph.trim());
+function splitLine(line, maxChars) {
+    const chars = codePoints(line.trim());
     if (!chars.length) return [];
-    if (chars.length <= maxChars) return [chars.join('')];
-
-    const result = [];
+    const segments = [];
     let start = 0;
+
     while (start < chars.length) {
         const remaining = chars.length - start;
         if (remaining <= maxChars) {
-            result.push(chars.slice(start).join('').trim());
+            segments.push(chars.slice(start).join('').trim());
             break;
         }
 
-        const hardEnd = start + maxChars;
-        const minBreak = start + Math.max(1, Math.floor(maxChars * 0.45));
-        let cut = findBreak(chars, start, hardEnd, minBreak, STRONG_BREAK);
-        if (cut < 0) cut = findBreak(chars, start, hardEnd, minBreak, WEAK_BREAK);
+        const end = start + maxChars;
+        let cut = findBreak(chars, start, end, SENTENCE_END);
         if (cut < 0) {
-            for (let i = hardEnd - 1; i >= minBreak; i--) {
-                if (/\s/.test(chars[i])) {
-                    cut = i + 1;
-                    break;
+            const minFallback = start + Math.floor(maxChars * FALLBACK_RATIO);
+            cut = findBreak(chars, start, end, CLAUSE_BREAK, minFallback);
+            if (cut < 0) cut = findBreak(chars, start, end, WEAK_BREAK, minFallback);
+            if (cut < 0) {
+                for (let i = end - 1; i >= minFallback; i--) {
+                    if (/\s/u.test(chars[i])) {
+                        cut = i + 1;
+                        break;
+                    }
                 }
             }
         }
-        if (cut <= start) cut = hardEnd;
+        if (cut <= start) cut = end;
 
         const segment = chars.slice(start, cut).join('').trim();
-        if (segment) result.push(segment);
+        if (segment) segments.push(segment);
         start = cut;
-        while (start < chars.length && /\s/.test(chars[start])) start++;
+        while (start < chars.length && /\s/u.test(chars[start])) start++;
     }
 
-    if (result.length > 1) {
-        const tail = result[result.length - 1];
-        const previous = result[result.length - 2];
-        if (codePoints(tail).length < Math.floor(maxChars * 0.2)
-            && codePoints(`${previous}${tail}`).length <= maxChars) {
-            result.splice(result.length - 2, 2, `${previous}${tail}`);
-        }
-    }
-
-    return result;
+    return segments;
 }
 
 export function segmentNarrationText(input, maxChars = 70) {
-    const max = Math.max(20, Math.min(300, Number(maxChars) || 70));
+    const max = Math.max(20, Math.min(1000, Number(maxChars) || 70));
     const text = normalizeNarrationText(input);
     if (!text) return [];
 
-    const paragraphs = text.split(/\n+/).map(x => x.trim()).filter(Boolean);
-    return paragraphs.flatMap(paragraph => splitParagraph(paragraph, max)).filter(Boolean);
+    return text
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .flatMap(line => splitLine(line, max));
 }
 
 export async function sha256Hex(input) {

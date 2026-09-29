@@ -1,5 +1,5 @@
 export const SETTINGS_KEY = 'multiTtsNarrator';
-export const SETTINGS_VERSION = 1;
+export const SETTINGS_VERSION = 2;
 export const CHECKPOINT_KEY = 'st-multitts-narrator:checkpoint:v1';
 
 export const DEFAULT_SETTINGS = Object.freeze({
@@ -7,6 +7,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     enabled: false,
     autoNarrate: true,
     endpoint: 'http://127.0.0.1:8774',
+    sendProsodyParams: true,
     speed: 50,
     volume: 100,
     pitch: 50,
@@ -28,10 +29,11 @@ export function normalizeSettings(raw = {}) {
         enabled: Boolean(raw.enabled ?? DEFAULT_SETTINGS.enabled),
         autoNarrate: Boolean(raw.autoNarrate ?? DEFAULT_SETTINGS.autoNarrate),
         endpoint: String(raw.endpoint || DEFAULT_SETTINGS.endpoint).trim(),
+        sendProsodyParams: Boolean(raw.sendProsodyParams ?? DEFAULT_SETTINGS.sendProsodyParams),
         speed: clamp(raw.speed, 0, 100, DEFAULT_SETTINGS.speed),
         volume: clamp(raw.volume, 0, 100, DEFAULT_SETTINGS.volume),
         pitch: clamp(raw.pitch, 0, 100, DEFAULT_SETTINGS.pitch),
-        segmentChars: Math.round(clamp(raw.segmentChars, 20, 300, DEFAULT_SETTINGS.segmentChars)),
+        segmentChars: Math.round(clamp(raw.segmentChars, 20, 1000, DEFAULT_SETTINGS.segmentChars)),
         lookAhead: Math.round(clamp(raw.lookAhead, 1, 5, DEFAULT_SETTINGS.lookAhead)),
         maxInFlight: Math.round(clamp(raw.maxInFlight, 1, 5, DEFAULT_SETTINGS.maxInFlight)),
         retryCount: Math.round(clamp(raw.retryCount, 0, 1, DEFAULT_SETTINGS.retryCount)),
@@ -40,22 +42,24 @@ export function normalizeSettings(raw = {}) {
 }
 
 export function migrateSettings(raw = {}) {
-    const version = Number(raw?.version || 0);
-    if (version <= SETTINGS_VERSION) return normalizeSettings(raw);
     return normalizeSettings(raw);
 }
 
 export function settingsFingerprintInput(settings) {
     const s = normalizeSettings(settings);
-    return JSON.stringify({
+    const fingerprint = {
         endpoint: s.endpoint,
-        speed: s.speed,
-        volume: s.volume,
-        pitch: s.pitch,
+        sendProsodyParams: s.sendProsodyParams,
         segmentChars: s.segmentChars,
         lookAhead: s.lookAhead,
         maxInFlight: s.maxInFlight,
-    });
+    };
+    if (s.sendProsodyParams) {
+        fingerprint.speed = s.speed;
+        fingerprint.volume = s.volume;
+        fingerprint.pitch = s.pitch;
+    }
+    return JSON.stringify(fingerprint);
 }
 
 export class SettingsStore {
