@@ -5,7 +5,7 @@
   "optional": [],
   "js": "index.js",
   "author": "vickychinghk",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "hooks": {
     "activate": "init"
   },
