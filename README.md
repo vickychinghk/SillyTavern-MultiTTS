@@ -1,5 +1,7 @@
 # SillyTavern MultiTTS
 
+> Project continuity: read [PROJECT_MEMORY.md](./PROJECT_MEMORY.md) first. Detailed 2026-09-29 investigation: [docs/SESSION_2026-09-29.md](./docs/SESSION_2026-09-29.md). Diagnostic build is preserved on branch `diagnostic-v1.2.2`.
+
 Use the Android **MultiTTS** local forwarding service as a SillyTavern TTS provider.
 
 ## Current release
