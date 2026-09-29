@@ -1,79 +1,34 @@
 # MultiTTS Narrator for SillyTavern
 
-> Repository reboot — design baseline only. No production code is present on `main`.
+Independent narration extension for SillyTavern + Android MultiTTS. It does **not** use SillyTavern's native TTS provider, Voice Map, TTS queue, or TTS playback controls.
 
-This repository is being rebuilt as an **independent narration engine for SillyTavern**, using the Android **MultiTTS** local forwarding service.
+## Install
 
-The repository name is historical. The new product **does not use SillyTavern's native TTS provider, TTS queue, audio queue, Voice Map, or TTS playback controls**.
+1. In SillyTavern, install a third-party extension from this repository URL.
+2. Open **Extensions → MultiTTS Narrator**.
+3. Enable Narrator.
+4. Keep the default endpoint `http://127.0.0.1:8774` unless your MultiTTS service uses another address.
+5. Run **Health test**. You should hear a short test sentence.
+6. Use **Narrate current**, then enable automatic narration when ready.
 
-## Product direction
+## What v2 alpha does
 
-The new architecture is intentionally narrow:
+- narrates completed assistant replies from SillyTavern canonical chat state;
+- deterministic paragraph/punctuation-aware segmentation;
+- bounded concurrent preload with strict in-order playback;
+- real pause/resume, stop, retry and skip;
+- one-latest-message auto queue while current narration is active;
+- cancels stale audio after edits/swipes/deletes/chat changes;
+- Media Session controls when supported;
+- privacy-safe recovery checkpoint and diagnostics;
+- direct `<audio>` loading from MultiTTS `/forward`, with `voice` omitted.
 
-```text
-SillyTavern
-  └─ canonical chat state + public events
-       ↓
-MultiTTS Narrator extension
-  ├─ message selection
-  ├─ text normalization
-  ├─ segmentation
-  ├─ synthesis scheduling / preload window
-  ├─ ordered playback
-  ├─ pause / resume / stop / skip
-  ├─ recovery checkpoints
-  └─ diagnostics
-       ↓
-Android Chrome media loader
-       ↓
-http://127.0.0.1:8774/forward
-       ↓
-MultiTTS
-       ↓
-voice/upstream selected inside MultiTTS
-```
+The initial defaults (70 characters, 3 look-ahead / 3 simultaneous loads) are calibration defaults, not claimed device limits. Advanced settings allow testing up to 5 simultaneous loads.
 
-## Core rules
+## Important limits
 
-- SillyTavern is the **host and message source**, not the TTS engine.
-- Integration is event-driven; DOM scraping is prohibited unless a future upstream regression leaves no supported alternative.
-- Normal operation never calls `/voices`.
-- Normal operation omits `voice=`; MultiTTS owns narrator selection.
-- Audio is loaded through native HTML media elements, because the current MultiTTS service is reachable as media but is not CORS-readable from the remote SillyTavern page.
-- Narration state belongs to this extension: pause means pause, stop means stop, and the current segment/time are not intentionally discarded on pause.
-- Background browser survival is a separate platform problem. The extension must degrade honestly and must not claim to defeat Android/Chrome process suspension.
+Android/Chrome may freeze or discard a background page. This extension improves narration continuity but cannot provide Android foreground-service guarantees or keep LLM generation alive after the browser connection is killed.
 
-## Current status
+No full chat text is stored by Narrator. A non-loopback custom endpoint is explicitly warned because narration text will leave the local device/browser for that host.
 
-**Architecture complete enough to begin implementation; implementation has intentionally not started.**
-
-The previous SillyTavern TTS-provider implementation is frozen at:
-
-- `archive/st-tts-provider-v1.2.2-final`
-- older diagnostic snapshot: `diagnostic-v1.2.2`
-
-The next implementation line is planned as **2.0.0-alpha**.
-
-Start here:
-
-1. [PROJECT_STATE.md](./PROJECT_STATE.md)
-2. [Product specification](./docs/PRODUCT.md)
-3. [Architecture](./docs/ARCHITECTURE.md)
-4. [Implementation blueprint](./docs/IMPLEMENTATION_BLUEPRINT.md)
-5. [Test plan](./docs/TEST_PLAN.md)
-
-## Non-goals
-
-This project does not attempt to:
-
-- patch or replace SillyTavern's core TTS subsystem;
-- keep LLM generation alive after the browser connection is killed;
-- implement an Android foreground service inside a browser extension;
-- scrape rendered chat text from the DOM;
-- manage MultiTTS voice catalogs;
-- proxy private chat text through a remote server;
-- promise uninterrupted playback after Chrome/Android freezes or discards the page.
-
-## License
-
-No new license decision is made by this architecture reset. Do not add a license as part of implementation without the repository owner's explicit choice.
+Developer notes: [Design](./docs/DESIGN.md) · [Testing](./docs/TESTING.md)

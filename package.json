@@ -1,0 +1,10 @@
+{
+  "name": "sillytavern-multitts-narrator",
+  "version": "2.0.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "check": "node --check index.js && node --check src/host.js && node --check src/settings.js && node --check src/text.js && node --check src/media.js && node --check src/narrator.js && node --check src/ui.js"
+  }
+}

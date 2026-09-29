@@ -1,0 +1,90 @@
+#multitts-narrator-settings .inline-drawer-content {
+    display: grid;
+    gap: 0.65rem;
+}
+
+#multitts-narrator-settings label:not(.checkbox_label) {
+    display: grid;
+    gap: 0.25rem;
+}
+
+#multitts-narrator-settings .mtn-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.6rem;
+}
+
+#multitts-narrator-settings .mtn-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+#multitts-narrator-settings details {
+    display: grid;
+    gap: 0.55rem;
+}
+
+#multitts-narrator-settings details[open] > *:not(summary) {
+    margin-top: 0.55rem;
+}
+
+#multitts-narrator-settings .mtn-status {
+    font-weight: 600;
+}
+
+#multitts-narrator-settings .mtn-notice,
+#multitts-narrator-settings [data-role="endpoint-warning"] {
+    font-size: 0.9em;
+    opacity: 0.9;
+}
+
+#multitts-narrator-settings .mtn-warning {
+    color: var(--warning-color, #d9a441);
+}
+
+#multitts-narrator-controls {
+    position: fixed;
+    right: max(12px, env(safe-area-inset-right));
+    bottom: max(72px, calc(env(safe-area-inset-bottom) + 12px));
+    z-index: 30000;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    max-width: min(92vw, 520px);
+    padding: 0.45rem;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 0.75rem;
+    background: var(--SmartThemeBlurTintColor, rgba(20, 20, 20, 0.92));
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+    backdrop-filter: blur(8px);
+}
+
+#multitts-narrator-controls[hidden] {
+    display: none !important;
+}
+
+#multitts-narrator-controls .menu_button {
+    min-width: 2.4rem;
+    min-height: 2.4rem;
+    padding: 0.3rem 0.5rem;
+}
+
+#multitts-narrator-controls [data-role="compact-status"] {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.9em;
+}
+
+@media (max-width: 700px) {
+    #multitts-narrator-settings .mtn-grid {
+        grid-template-columns: 1fr;
+    }
+
+    #multitts-narrator-controls {
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
+    }
+}
