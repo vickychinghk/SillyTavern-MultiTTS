@@ -224,6 +224,11 @@ export class NarratorUI {
         const button = nativeNarrate?.cloneNode(true) || this.document.createElement('div');
         button.removeAttribute('id');
         button.removeAttribute('data-i18n');
+        button.removeAttribute('onclick');
+        button.style.removeProperty('display');
+        button.hidden = false;
+        button.tabIndex = 0;
+        button.setAttribute('role', 'button');
         button.classList.remove('mes_narrate');
         button.classList.add('mtn-message-play', 'mes_button');
         if (!button.matches('.fa-solid, .fa-regular')) button.classList.add('fa-solid', 'fa-volume-high');
