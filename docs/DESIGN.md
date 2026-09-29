@@ -26,6 +26,10 @@ Core rules:
 - non-loopback endpoints require an explicit confirmation before saving;
 - background browser execution is best-effort, not a foreground service.
 
+## 工程约束
+
+> 文档和代码都要精简，不要膨胀。文档尽可能的最精简化，不要重复。代码尽可能商业成熟，用一些组件，不要用一些手写，奇怪的手写。以及有问题的话，要先提出来。
+
 ## Source shape
 
 - `index.js` — lifecycle wiring only.
@@ -46,11 +50,11 @@ Alpha keeps one active narration plus at most one latest pending automatic messa
 
 The recovery checkpoint stores only chat/message identifiers, revision hash, segment index/time, settings hash, status and timestamp. Restore reconstructs text from SillyTavern and waits for an explicit Resume action.
 
-## Alpha.2 polish
+## Current UX
 
-- UI is Chinese-only.
-- Speed / volume / pitch are one optional request group; disabling it sends only `text` to `/forward`.
-- Segment size supports 20–1000 code points. Source newlines are hard boundaries; long lines prefer the rightmost complete sentence, then late clause punctuation/whitespace, then a hard cut.
-- Previous/next transport controls preserve the normal prepared-segment handoff; retry is only shown for actual failures.
-- Any assistant message can be narrated from a cloned SillyTavern message-action control, while canonical text still comes from chat state by `mesid`.
-- Rendered-text highlighting/click-to-seek remains deferred rather than coupling playback to rendered Markdown DOM.
+- Chinese-only UI; optional speed/volume/pitch request parameters.
+- 20–1000 code-point semantic segmentation: newline first, then complete sentence, then late clause/whitespace fallback.
+- Prepared audio remains ordered and gap-minimized; previous/next transport does not replace the preload path.
+- Each assistant message keeps the right-side MultiTTS action and also gets the same cloned control immediately after `.name_text` when that standard name node exists.
+- Optional “skip code blocks” and “skip tagged blocks” mirror SillyTavern TTS preprocessing semantics before normalization/segmentation.
+- Rendered-text highlighting/click-to-seek remains deferred.
