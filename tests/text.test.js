@@ -1,10 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeNarrationText, segmentNarrationText, sha256Hex } from '../src/text.js';
+import { filterNarrationText, normalizeNarrationText, prepareNarrationText, segmentNarrationText, sha256Hex } from '../src/text.js';
 
 test('normalization preserves line boundaries and removes image markdown', () => {
     const value = normalizeNarrationText('  第一行。\n\n![x](a.png)\n第二行。  ');
     assert.equal(value, '第一行。\n\n\n第二行。');
+});
+
+
+test('code block skipping matches SillyTavern TTS fenced-block behavior', () => {
+    const input = '开头\n\`\`\`js\nconst x = 1;\n\`\`\`\n中间\n~~~\nyaml: true\n~~~\n结尾';
+    const filtered = filterNarrationText(input, { skipCodeBlocks: true });
+    assert.equal(filtered.includes('const x = 1'), false);
+    assert.equal(filtered.includes('yaml: true'), false);
+    assert.deepEqual(segmentNarrationText(filtered, 1000), ['开头', '中间', '结尾']);
+});
+
+test('tag block skipping removes paired tagged content', () => {
+    const input = '保留<Tag>跳过这里</Tag>继续<think>也跳过</think>结束';
+    assert.equal(
+        prepareNarrationText(input, { skipTagBlocks: true }),
+        '保留继续结束',
+    );
+});
+
+test('content filters are opt-in', () => {
+    const input = '前\n\`\`\`code\`\`\`\n<Tag>内容</Tag>后';
+    assert.equal(prepareNarrationText(input), normalizeNarrationText(input));
 });
 
 test('every non-empty source line is a hard segment boundary', () => {

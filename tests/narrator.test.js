@@ -252,3 +252,13 @@ test('previous segment gets loading priority while current segment is still buff
     assert.equal(controller.session.currentIndex, 0);
     assert.equal(controller.session.segments[0].state, 'loading');
 });
+
+
+test('narration filters code and tagged blocks before segmentation', async () => {
+    const text = '开头。\n\`\`\`js\nsecretCode();\n\`\`\`\n<Tag>秘密标签内容</Tag>\n结尾。';
+    const { host, controller } = makeController(text, { skipCodeBlocks: true, skipTagBlocks: true });
+    await controller.narrateCandidate(host.candidate(), 'manual');
+    assert.equal(controller.session.source.text.includes('secretCode'), false);
+    assert.equal(controller.session.source.text.includes('秘密标签内容'), false);
+    assert.deepEqual(controller.session.segments.map(segment => segment.text), ['开头。', '结尾。']);
+});

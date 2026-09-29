@@ -4,6 +4,17 @@ const WEAK_BREAK = /[，,、]/u;
 const CLOSER = /["'”’」』）》】〉]/u;
 const FALLBACK_RATIO = 0.6;
 
+export function filterNarrationText(input, { skipCodeBlocks = false, skipTagBlocks = false } = {}) {
+    let text = String(input ?? '');
+    if (skipCodeBlocks) {
+        text = text.replace(/```.*?```/gs, '').replace(/~~~.*?~~~/gs, '');
+    }
+    if (skipTagBlocks) {
+        text = text.replace(/<.*?>[\s\S]*?<\/.*?>/g, '');
+    }
+    return text.trim();
+}
+
 export function normalizeNarrationText(input) {
     return String(input ?? '')
         .replace(/\r\n?/g, '\n')
@@ -12,6 +23,10 @@ export function normalizeNarrationText(input) {
         .replace(/[ \t]+/g, ' ')
         .replace(/ *\n */g, '\n')
         .trim();
+}
+
+export function prepareNarrationText(input, options = {}) {
+    return normalizeNarrationText(filterNarrationText(input, options));
 }
 
 const codePoints = text => Array.from(text);

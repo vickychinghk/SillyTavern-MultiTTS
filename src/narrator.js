@@ -1,4 +1,4 @@
-import { normalizeNarrationText, segmentNarrationText, sha256Hex } from './text.js';
+import { prepareNarrationText, segmentNarrationText, sha256Hex } from './text.js';
 import { settingsFingerprintInput } from './settings.js';
 import { normalizeEndpoint, updateMediaSessionState } from './media.js';
 
@@ -82,7 +82,7 @@ export class NarratorController {
 
     async sourceFromCandidate(candidate) {
         if (!candidate?.text || candidate.chatId === undefined || candidate.index === undefined) return null;
-        const text = normalizeNarrationText(candidate.text);
+        const text = prepareNarrationText(candidate.text, this.settingsStore.get());
         if (!text) return null;
         const revisionHash = await sha256Hex(JSON.stringify({
             chatId: String(candidate.chatId),
@@ -753,12 +753,14 @@ export class NarratorController {
         try { endpoint = normalizeEndpoint(settings.endpoint); } catch {}
         return JSON.stringify({
             product: 'MultiTTS Narrator',
-            version: '2.0.0-alpha.2',
+            version: '2.0.0-alpha.3',
             generatedAt: new Date(this.now()).toISOString(),
             state: this.getSnapshot(),
             settings: {
                 endpoint,
                 sendProsodyParams: settings.sendProsodyParams,
+                skipCodeBlocks: settings.skipCodeBlocks,
+                skipTagBlocks: settings.skipTagBlocks,
                 speed: settings.speed,
                 volume: settings.volume,
                 pitch: settings.pitch,
