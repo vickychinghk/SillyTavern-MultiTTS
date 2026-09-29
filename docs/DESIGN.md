@@ -46,14 +46,11 @@ Alpha keeps one active narration plus at most one latest pending automatic messa
 
 The recovery checkpoint stores only chat/message identifiers, revision hash, segment index/time, settings hash, status and timestamp. Restore reconstructs text from SillyTavern and waits for an explicit Resume action.
 
-## Next polish
+## Alpha.2 polish
 
-The next patch is deliberately small and must not disturb the proven preload/playback handoff.
-
-- UI copy becomes Chinese-only.
-- Speed / volume / pitch become one optional parameter group. When disabled, `/forward` sends only `text`.
-- Segment-size UI/validation increases to 1000 code points.
-- Every source line is a hard segment boundary, including one-character lines. A long line splits at the rightmost sentence-ending punctuation within the configured limit; weaker punctuation and then the hard limit are fallbacks.
-- Compact controls add previous/next segment. Retry remains contextual to an actual error instead of occupying a normal transport slot.
-- Any assistant message can be narrated from its own message action. The button should reuse SillyTavern's existing message-action container/style and resolve text by `mesid` through canonical chat state; DOM text is never the source.
-- Exact rendered-text highlighting/click-to-seek is deferred until canonical segments can be mapped to rendered Markdown safely. Whole-message/segment navigation must not mutate SillyTavern message content.
+- UI is Chinese-only.
+- Speed / volume / pitch are one optional request group; disabling it sends only `text` to `/forward`.
+- Segment size supports 20–1000 code points. Source newlines are hard boundaries; long lines prefer the rightmost complete sentence, then late clause punctuation/whitespace, then a hard cut.
+- Previous/next transport controls preserve the normal prepared-segment handoff; retry is only shown for actual failures.
+- Any assistant message can be narrated from a cloned SillyTavern message-action control, while canonical text still comes from chat state by `mesid`.
+- Rendered-text highlighting/click-to-seek remains deferred rather than coupling playback to rendered Markdown DOM.
