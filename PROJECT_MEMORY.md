@@ -540,3 +540,113 @@ Reference:
 https://github.com/SillyTavern/SillyTavern/blob/release/public/scripts/events.js
 
 Therefore, if we later build a separate narrator/player extension, the preferred integration is to subscribe to SillyTavern's event bus and read the canonical chat/message state. Do **not** scrape rendered DOM text unless a missing event forces it. This materially reduces coupling to UI markup.
+
+
+## Community evidence: Android background survival and extension scope
+
+Research follow-up on 2026-09-29 clarified the distinction between a SillyTavern UI extension and a native app.
+
+### "Independent narrator" means a normal SillyTavern UI extension unless explicitly stated otherwise
+
+The proposed independent narrator/player is still installed through SillyTavern's Extensions panel (stacked-blocks/cube UI), exactly like other third-party UI extensions. It is JavaScript/HTML/CSS loaded inside the SillyTavern web page. It can create its own UI, dialogs, audio elements, Web Audio graph, Media Session handlers, and subscribe to SillyTavern events. It does **not** need to be a separate Android app.
+
+Official extension docs confirm UI extensions can add/change behavior, and current official/community examples include:
+- Dynamic Audio
+- Live2D / VRM
+- EmulatorJS
+- Screen Share
+- Guinevere UI (direct custom HTML/CSS/JavaScript)
+- Code Runner
+
+References:
+- https://docs.sillytavern.app/extensions/
+- https://docs.sillytavern.app/for-contributors/writing-extensions/
+- https://github.com/SillyTavern/SillyTavern-Content/blob/main/extensions.json
+
+Important limit: because the extension shares the browser page/WebView lifecycle, it is frozen/discarded together with that page. A larger UI extension improves TTS state/queue UX but does not become a native Android background service.
+
+### Community workarounds for mobile background generation
+
+Repeated Android user reports (2025-2026) describe the same failure: generation aborts when the browser is backgrounded or the screen locks.
+
+Commonly reported mitigations:
+1. Set the browser (and Termux if local) to unrestricted/background battery usage.
+2. Try a browser less aggressively suspended by the device/OEM. Community reports mention Opera and Hermit positively on some devices; results vary.
+3. Use SillyTavern's official Silence Player extension.
+4. Keep SillyTavern visibly active with split-screen or Android floating-window mode.
+5. Increase screen timeout / prevent screen lock for long generations.
+6. For stronger reliability, move to a native/wrapped client (e.g. TauriTavern) rather than a normal browser tab.
+
+Community references:
+- https://www.reddit.com/r/SillyTavernAI/comments/1jqetc7/
+- https://www.reddit.com/r/SillyTavernAI/comments/1smvyr4/
+- https://www.reddit.com/r/SillyTavernAI/comments/1unyn1c/
+- https://www.reddit.com/r/SillyTavernAI/comments/1u5uqiy/
+
+There is no universal browser-only fix in these reports. Device/OEM behavior varies significantly.
+
+### Existing SillyTavern issue confirms focus/background abort
+
+Issue #2690 reported that on Android Firefox, merely losing focus caused inference to abort. It was later closed as inactive/not planned:
+https://github.com/SillyTavern/SillyTavern/issues/2690
+
+Feature request #4007 proposed moving chat-generation ownership to the SillyTavern backend so that it could keep buffering the model response while a mobile client disconnects, then resynchronize on reconnect. It describes exactly the architectural remedy for background mobile interruption but was closed as not planned:
+https://github.com/SillyTavern/SillyTavern/issues/4007
+
+### "Play music continuously" has real browser-level basis, but is still only a mitigation
+
+Chrome's documented background rules are important:
+
+- A page that has made actual sound within the past 30 seconds gets minimal timer throttling.
+- A **silent** audio track specifically does not count as actual sound for this timer exemption.
+- Chrome's Page Lifecycle heuristics state that pages observed **playing audio** or using **WebRTC** are less likely to be frozen/discarded, except under extreme resource pressure.
+
+References:
+- https://developer.chrome.com/blog/timer-throttling-in-chrome-88
+- https://developer.chrome.com/docs/web-platform/page-lifecycle-api/
+
+Therefore an always-playing **actual low-volume audio/BGM** track is technically more meaningful than a mathematically silent track, and the idea is worth A/B testing. However this is not a guarantee against Android/OEM process killing.
+
+Do not silently introduce fake audible noise to production. If tested, make it an explicit diagnostic/experimental mode.
+
+### PWA is not equivalent to a native foreground service
+
+Installing SillyTavern as a PWA improves launcher/fullscreen UX but does not fundamentally free the page from browser lifecycle limits. Community reports say Hermit/PWA can extend background survival, but durations vary.
+
+Web background APIs/service workers also do not provide a general solution for keeping an arbitrary long-lived streaming chat request running forever. Background Sync is not intended for long-running streaming tasks.
+
+Reference:
+https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Offline_and_background_operation
+
+### Native implementations show the robust architecture
+
+TauriTavern's current frontend-host contract keeps chat-completion sessions in the Rust/native process, not the WebView. The frontend consumes sequenced events and can replay missing events after WebView suspension as long as the native process/session survives.
+
+Reference:
+https://github.com/Darkatse/TauriTavern/blob/main/docs/FrontendHostContract.md
+
+Its releases also explicitly mention improved Android/iOS background keep-alive:
+https://github.com/Darkatse/TauriTavern/releases
+
+This is the architecture class required for genuinely stronger background generation. Merely packaging the same browser page in a WebView wrapper does not automatically provide the same guarantee; the task itself has to be owned outside the WebView.
+
+### Development implication
+
+Keep the project options clearly separated:
+
+A. Thin MultiTTS provider:
+- smallest code;
+- uses SillyTavern native TTS semantics;
+- best compatibility, weakest control over queue/resume.
+
+B. Independent narrator **UI extension**:
+- still installed from SillyTavern Extensions;
+- can own segmentation, 5-wide preloading, ordered playback, true pause/resume, Media Session, diagnostics;
+- can use SillyTavern eventSource instead of DOM scraping;
+- still shares browser/WebView lifecycle.
+
+C. Native/background-capable client or companion:
+- generation/audio task ownership outside WebView;
+- substantially larger scope;
+- relevant only if reliable screen-off/background operation is a hard requirement.
+
