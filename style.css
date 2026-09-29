@@ -8,6 +8,10 @@
     gap: 0.25rem;
 }
 
+#multitts-narrator-settings .mtn-grid[hidden] {
+    display: none !important;
+}
+
 #multitts-narrator-settings .mtn-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
