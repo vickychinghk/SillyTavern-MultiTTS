@@ -474,6 +474,13 @@ export class NarratorController {
             current.slot.pause();
             current.slot.seek(0);
             current.state = 'ready';
+        } else if (current?.state === 'loading') {
+            current.slot?.dispose();
+            current.slot = null;
+            current.state = 'queued';
+            current.attempts = 0;
+            current.loadStartedAt = null;
+            current.readyAt = null;
         } else if (current?.state === 'error') {
             current.slot?.dispose();
             current.slot = null;
