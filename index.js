@@ -1,41 +1,33 @@
 /**
  * MultiTTS provider for SillyTavern.
  *
- * Designed for Android MultiTTS local forwarding service:
+ * Android MultiTTS local forwarder:
  *   GET http://127.0.0.1:8774/voices
  *   GET http://127.0.0.1:8774/forward?text=...&speed=...&volume=...&pitch=...&voice=...
  *
- * Requests are made directly by the browser, so this works when SillyTavern itself
- * is hosted on a remote server, as long as the browser is running on the Android
- * device where MultiTTS is installed and its forwarding service is enabled.
+ * v1.1 strategy:
+ * - Audio generation returns the direct /forward URL string to SillyTavern.
+ *   SillyTavern's native TTS player accepts URL strings, avoiding fetch/CORS for audio.
+ * - /voices parsing supports MultiTTS's real { success, data: { catalog } } format.
+ * - If /voices cannot be read from JavaScript (e.g. CORS), a built-in default voice
+ *   remains available. It omits the voice= parameter and uses MultiTTS's current narrator.
  */
 
 import { eventSource, event_types } from '../../../../script.js';
 import { registerTtsProvider, saveTtsProviderSettings } from '../../tts/index.js';
 
 const PROVIDER_NAME = 'MultiTTS';
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
+const DEFAULT_VOICE_ID = '__multitts_default__';
+const DEFAULT_VOICE_NAME = 'MultiTTS 默认声音（使用 APP 当前旁白）';
 const PREVIEW_TEXT = '你好，这是一段 MultiTTS 语音试听。';
 
-let activeController = null;
 let registered = false;
-
-function abortActiveRequest() {
-    if (activeController) {
-        try {
-            activeController.abort();
-        } catch {
-            // ignore
-        }
-        activeController = null;
-    }
-}
 
 function normalizeBaseUrl(value) {
     let url = String(value || '').trim() || 'http://127.0.0.1:8774';
     url = url.replace(/\/+$/, '');
-    url = url.replace(/\/forward$/i, '');
-    url = url.replace(/\/voices$/i, '');
+    url = url.replace(/\/(forward|voices)$/i, '');
     return url;
 }
 
@@ -48,18 +40,12 @@ function firstNonEmpty(...values) {
     return '';
 }
 
-function unwrapVoiceList(payload) {
-    if (Array.isArray(payload)) return payload;
-    if (!payload || typeof payload !== 'object') return [];
-
-    for (const key of ['voices', 'data', 'list', 'items', 'result']) {
-        if (Array.isArray(payload[key])) return payload[key];
-    }
-
-    return Object.entries(payload).map(([id, value]) => {
-        if (value && typeof value === 'object') return { id, ...value };
-        return { id, name: String(value) };
-    });
+function defaultVoice() {
+    return {
+        name: DEFAULT_VOICE_NAME,
+        voice_id: DEFAULT_VOICE_ID,
+        lang: 'zh-CN',
+    };
 }
 
 function normalizeVoice(raw, index) {
@@ -92,17 +78,79 @@ function normalizeVoice(raw, index) {
         id,
     );
 
-    const lang = firstNonEmpty(raw.lang, raw.language, raw.locale, 'zh-CN');
-
+    const lang = firstNonEmpty(raw.locale, raw.lang, raw.language, 'zh-CN');
     if (!id) return null;
-    return { name, voice_id: id, lang };
+
+    return {
+        name,
+        voice_id: id,
+        lang,
+    };
+}
+
+function extractMultiTtsVoices(payload) {
+    if (!payload) return [];
+
+    // Real MultiTTS shape used by existing integrations:
+    // { success: true, data: { catalog: { groupA:[...], groupB:[...] } } }
+    const catalog = payload?.data?.catalog;
+    if (catalog && typeof catalog === 'object') {
+        return Object.values(catalog)
+            .flatMap(group => Array.isArray(group) ? group : [])
+            .map((voice, index) => normalizeVoice(voice, index))
+            .filter(Boolean);
+    }
+
+    // Other common shapes, retained for compatibility.
+    if (Array.isArray(payload)) {
+        return payload.map((voice, index) => normalizeVoice(voice, index)).filter(Boolean);
+    }
+
+    for (const key of ['voices', 'data', 'list', 'items', 'result']) {
+        if (Array.isArray(payload?.[key])) {
+            return payload[key].map((voice, index) => normalizeVoice(voice, index)).filter(Boolean);
+        }
+    }
+
+    return [];
+}
+
+function dedupeVoices(voices) {
+    const seen = new Set();
+    return voices.filter(voice => {
+        const id = String(voice.voice_id);
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+    });
+}
+
+function buildForwardUrl(base, text, voiceId, settings) {
+    const url = new URL(`${normalizeBaseUrl(base)}/forward`);
+    url.searchParams.set('text', String(text ?? ''));
+    url.searchParams.set('speed', String(settings.speed));
+    url.searchParams.set('volume', String(settings.volume));
+    url.searchParams.set('pitch', String(settings.pitch));
+
+    // Omitting voice= tells MultiTTS to use the current narrator/default voice.
+    if (
+        voiceId !== undefined &&
+        voiceId !== null &&
+        String(voiceId) !== '' &&
+        String(voiceId) !== DEFAULT_VOICE_ID
+    ) {
+        url.searchParams.set('voice', String(voiceId));
+    }
+
+    return url.toString();
 }
 
 export class MultiTtsProvider {
     settings;
-    voices = [];
+    voices = [defaultVoice()];
     separator = '。';
     audioElement = document.createElement('audio');
+    lastVoiceLoadError = '';
 
     defaultSettings = {
         voiceMap: {},
@@ -119,8 +167,8 @@ export class MultiTtsProvider {
             <input id="multitts_endpoint" type="text" class="text_pole" maxlength="300"
                    value="${this.defaultSettings.endpoint}" />
             <small>
-                默认：<code>http://127.0.0.1:8774</code>。请先在 Android MultiTTS 中开启“转发服务”。<br>
-                本扩展由当前浏览器直接访问手机本机，不经过 SillyTavern 服务器。
+                默认 <code>http://127.0.0.1:8774</code>。先在 Android MultiTTS 开启“转发服务”。<br>
+                实际语音播放直接把 <code>/forward?... </code> 交给浏览器音频播放器，不需要 JS 读取音频响应。
             </small>
 
             <label for="multitts_speed">语速：<span id="multitts_speed_value">50</span></label>
@@ -132,13 +180,16 @@ export class MultiTtsProvider {
             <label for="multitts_pitch">音高：<span id="multitts_pitch_value">50</span></label>
             <input id="multitts_pitch" type="range" min="0" max="100" step="1" value="50" />
 
-            <div class="flex-container flexGap5" style="margin-top:8px">
-                <button id="multitts_test_connection" type="button" class="menu_button">测试连接 / 刷新音色</button>
+            <div class="flex-container flexGap5" style="margin-top:8px; flex-wrap:wrap">
+                <button id="multitts_test_audio" type="button" class="menu_button">测试默认声音</button>
+                <button id="multitts_refresh_voices" type="button" class="menu_button">尝试读取音色列表</button>
             </div>
 
+            <div id="multitts_status" style="margin-top:6px"></div>
+
             <small>
-                如果浏览器首次询问“访问本地网络/本地设备”，请选择允许。<br>
-                音色映射仍使用 SillyTavern 原生 Voice Map。
+                如果“读取音色列表”失败，但“测试默认声音”能播放，说明只是 <code>/voices</code> 被浏览器跨域策略挡住；<br>
+                这不影响使用“MultiTTS 默认声音（使用 APP 当前旁白）”。角色映射可先全部选这个默认声音。
             </small>
         </div>`;
     }
@@ -165,17 +216,47 @@ export class MultiTtsProvider {
         bind('#multitts_volume');
         bind('#multitts_pitch');
 
-        $('#multitts_test_connection').off('.multitts').on('click.multitts', async () => {
+        $('#multitts_test_audio').off('.multitts').on('click.multitts', async () => {
             try {
-                this.voices = await this.fetchTtsVoiceObjects();
-                toastr.success(`已连接 MultiTTS，读取到 ${this.voices.length} 个音色。`, 'MultiTTS');
+                const url = buildForwardUrl(
+                    this.settings.endpoint,
+                    PREVIEW_TEXT,
+                    DEFAULT_VOICE_ID,
+                    this.settings,
+                );
+                this.audioElement.pause();
+                this.audioElement.currentTime = 0;
+                this.audioElement.src = url;
+                await this.audioElement.play();
+                this.setStatus('默认声音测试已开始播放。若能听到声音，主朗读链路就是通的。', true);
             } catch (error) {
-                toastr.error(String(error?.message || error), 'MultiTTS 连接失败');
+                this.setStatus(`默认声音测试失败：${String(error?.message || error)}`, false);
+            }
+        });
+
+        $('#multitts_refresh_voices').off('.multitts').on('click.multitts', async () => {
+            const voices = await this.fetchTtsVoiceObjects(true);
+            if (this.lastVoiceLoadError) {
+                this.setStatus(
+                    `无法从网页脚本读取 /voices，已保留默认声音。原因：${this.lastVoiceLoadError}`,
+                    false,
+                );
+            } else {
+                this.setStatus(`已读取 ${voices.length - 1} 个 MultiTTS 音色（另含 1 个默认声音）。`, true);
             }
         });
 
         await this.checkReady();
         console.info(`[MultiTTS] v${VERSION} settings loaded`);
+    }
+
+    setStatus(message, ok) {
+        const el = $('#multitts_status');
+        if (!el.length) return;
+        el.text(message);
+        el.css('opacity', '0.9');
+        el.css('font-size', '0.9em');
+        el.css('color', ok ? '' : 'var(--warning-color, #d9a441)');
     }
 
     updateLabels() {
@@ -194,20 +275,15 @@ export class MultiTtsProvider {
     }
 
     async checkReady() {
-        try {
-            this.voices = await this.fetchTtsVoiceObjects();
-        } catch (error) {
-            this.voices = [];
-            console.warn('[MultiTTS] initial connection check failed:', error);
-        }
+        // Never fail provider initialization just because /voices cannot be fetched.
+        this.voices = await this.fetchTtsVoiceObjects(false);
     }
 
     async onRefreshClick() {
-        this.voices = await this.fetchTtsVoiceObjects();
+        this.voices = await this.fetchTtsVoiceObjects(true);
     }
 
     dispose() {
-        abortActiveRequest();
         try {
             this.audioElement.pause();
         } catch {
@@ -217,105 +293,90 @@ export class MultiTtsProvider {
 
     async getVoice(voiceName) {
         if (!this.voices.length) {
-            this.voices = await this.fetchTtsVoiceObjects();
+            this.voices = [defaultVoice()];
         }
+
         const wanted = String(voiceName);
-        const match = this.voices.find(v => String(v.name) === wanted || String(v.voice_id) === wanted);
-        if (!match) {
-            throw new Error(`MultiTTS voice not found: ${voiceName}`);
+        let match = this.voices.find(
+            voice => String(voice.name) === wanted || String(voice.voice_id) === wanted,
+        );
+
+        // Preserve old mappings gracefully if /voices is no longer readable.
+        if (!match && wanted) {
+            match = { name: wanted, voice_id: wanted, lang: 'zh-CN' };
         }
-        return match;
+
+        return match || defaultVoice();
     }
 
-    async fetchTtsVoiceObjects() {
+    async fetchTtsVoiceObjects(showLog = false) {
+        const fallback = defaultVoice();
         const base = normalizeBaseUrl(this.settings?.endpoint || this.defaultSettings.endpoint);
-        const response = await fetch(`${base}/voices`, {
-            method: 'GET',
-            cache: 'no-store',
-        });
 
-        if (!response.ok) {
-            throw new Error(`GET /voices failed: HTTP ${response.status} ${await response.text()}`);
+        try {
+            const response = await fetch(`${base}/voices`, {
+                method: 'GET',
+                cache: 'no-store',
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const text = await response.text();
+            let payload;
+            try {
+                payload = JSON.parse(text);
+            } catch {
+                throw new Error('返回内容不是 JSON');
+            }
+
+            const parsed = dedupeVoices(extractMultiTtsVoices(payload));
+
+            if (!parsed.length) {
+                throw new Error('返回 JSON 中没有识别到 data.catalog 音色');
+            }
+
+            this.lastVoiceLoadError = '';
+            this.voices = [fallback, ...parsed];
+            if (showLog) {
+                console.info(`[MultiTTS] loaded ${parsed.length} voices from /voices`);
+            }
+            return this.voices;
+        } catch (error) {
+            this.lastVoiceLoadError = String(error?.message || error);
+            console.warn(
+                '[MultiTTS] /voices could not be read by page JavaScript. Falling back to app default voice:',
+                error,
+            );
+            this.voices = [fallback];
+            return this.voices;
         }
-
-        const payload = await response.json();
-        const list = unwrapVoiceList(payload)
-            .map((voice, index) => normalizeVoice(voice, index))
-            .filter(Boolean);
-
-        if (!list.length) {
-            throw new Error('MultiTTS /voices 返回成功，但没有识别到音色。请把 /voices 返回内容发给我适配。');
-        }
-
-        const seen = new Set();
-        this.voices = list.filter(v => {
-            const key = String(v.voice_id);
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-        });
-
-        return this.voices;
-    }
-
-    async fetchTtsGeneration(text, voiceId, signal) {
-        const base = normalizeBaseUrl(this.settings?.endpoint || this.defaultSettings.endpoint);
-        const url = new URL(`${base}/forward`);
-        url.searchParams.set('text', String(text ?? ''));
-        url.searchParams.set('speed', String(this.settings.speed));
-        url.searchParams.set('volume', String(this.settings.volume));
-        url.searchParams.set('pitch', String(this.settings.pitch));
-        if (voiceId !== undefined && voiceId !== null && String(voiceId) !== '') {
-            url.searchParams.set('voice', String(voiceId));
-        }
-
-        const response = await fetch(url.toString(), {
-            method: 'GET',
-            cache: 'no-store',
-            signal,
-            headers: { 'Accept': 'audio/*,*/*;q=0.8' },
-        });
-
-        if (!response.ok) {
-            throw new Error(`GET /forward failed: HTTP ${response.status} ${await response.text()}`);
-        }
-
-        return response;
     }
 
     async generateTts(text, voiceId) {
-        abortActiveRequest();
-        const controller = new AbortController();
-        activeController = controller;
-        try {
-            return await this.fetchTtsGeneration(text, voiceId, controller.signal);
-        } finally {
-            if (activeController === controller) {
-                activeController = null;
-            }
-        }
+        // SillyTavern accepts a URL string and assigns it directly to its <audio> element.
+        // This avoids fetch()/CORS entirely for actual TTS audio.
+        return buildForwardUrl(
+            this.settings.endpoint,
+            text,
+            voiceId,
+            this.settings,
+        );
     }
 
     async previewTtsVoice(voiceId) {
-        abortActiveRequest();
-        const controller = new AbortController();
-        activeController = controller;
+        const url = buildForwardUrl(
+            this.settings.endpoint,
+            PREVIEW_TEXT,
+            voiceId,
+            this.settings,
+        );
 
         this.audioElement.pause();
         this.audioElement.currentTime = 0;
-
-        try {
-            const response = await this.fetchTtsGeneration(PREVIEW_TEXT, voiceId, controller.signal);
-            const audio = await response.blob();
-            const url = URL.createObjectURL(audio);
-            this.audioElement.src = url;
-            await this.audioElement.play();
-            this.audioElement.onended = () => URL.revokeObjectURL(url);
-        } finally {
-            if (activeController === controller) {
-                activeController = null;
-            }
-        }
+        this.audioElement.src = url;
+        await this.audioElement.play();
     }
 }
 
@@ -330,15 +391,20 @@ function ensureProviderOption() {
         option.textContent = PROVIDER_NAME;
         select.appendChild(option);
     } else {
-        for (let i = 1; i < matches.length; i++) matches[i].remove();
+        for (let i = 1; i < matches.length; i++) {
+            matches[i].remove();
+        }
     }
 }
 
 function register() {
     ensureProviderOption();
-    for (const ms of [0, 500, 1500, 3000]) setTimeout(ensureProviderOption, ms);
+    for (const ms of [0, 500, 1500, 3000]) {
+        setTimeout(ensureProviderOption, ms);
+    }
 
     if (registered) return;
+
     try {
         registerTtsProvider(PROVIDER_NAME, MultiTtsProvider);
         registered = true;
