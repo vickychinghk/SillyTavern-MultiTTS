@@ -1,9 +1,11 @@
 import { eventSource, event_types } from '../../../../script.js';
-import { initVoiceMap, registerTtsProvider, saveTtsProviderSettings } from '../../tts/index.js';
+import { getCharacters, initVoiceMap, registerTtsProvider, saveTtsProviderSettings } from '../../tts/index.js';
 
 const NAME = 'MultiTTS';
-const VERSION = '1.2.0';
+const VERSION = '1.2.1';
 const DEFAULT_ID = '__multitts_default__';
+const CORE_DEFAULT = '[Default Voice]';
+const CORE_DISABLED = 'disabled';
 const DEFAULT_NAME = 'MultiTTS 默认声音（使用 APP 当前旁白）';
 const TEST_TEXT = '你好，这是 MultiTTS 与 SillyTavern 的诊断测试。';
 const TIMEOUT = 12000;
@@ -66,21 +68,51 @@ export class MultiTtsProvider {
           <label>音量 <span id="mt_vv">100</span></label><input id="mt_v" type="range" min="0" max="100" value="100">
           <label>音高 <span id="mt_pv">50</span></label><input id="mt_p" type="range" min="0" max="100" value="50">
           <hr><b>实际可用性</b><div style="display:grid;gap:6px;margin:6px 0">
-            <button id="mt_play" class="menu_button">① 测试默认声音（真正播放）</button>
-            <button id="mt_voices" class="menu_button">② 读取 /voices 并导入音色</button>
-            <button id="mt_diag" class="menu_button">③ 运行完整诊断</button>
-            <button id="mt_open_v" class="menu_button">新标签页打开 /voices</button>
-            <button id="mt_open_f" class="menu_button">新标签页打开 /forward</button>
+            <button type="button" id="mt_play" class="menu_button">① 测试默认声音（真正播放）</button>
+            <button type="button" id="mt_voices" class="menu_button">② 读取 /voices 并导入音色</button>
+            <button type="button" id="mt_diag" class="menu_button">③ 运行完整诊断</button>
+            <button type="button" id="mt_open_v" class="menu_button">新标签页打开 /voices</button>
+            <button type="button" id="mt_open_f" class="menu_button">新标签页打开 /forward</button>
           </div>
           <details><summary>高级：手动粘贴 /voices JSON（绕过 CORS）</summary>
             <textarea id="mt_json" class="text_pole" rows="5" placeholder="粘贴 /voices 返回的完整 JSON"></textarea>
-            <button id="mt_import" class="menu_button">解析并缓存音色</button>
+            <button type="button" id="mt_import" class="menu_button">解析并缓存音色</button>
           </details>
           <hr><b>诊断状态</b><div id="mt_status" style="white-space:pre-wrap;margin:5px 0"></div>
           <pre id="mt_log" style="max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;padding:7px;border:1px solid var(--SmartThemeBorderColor);font-size:.82em"></pre>
-          <div style="display:grid;gap:6px"><button id="mt_copy" class="menu_button">复制诊断报告</button><button id="mt_save" class="menu_button">下载诊断报告</button><button id="mt_clear" class="menu_button">清空日志</button></div>
+          <div style="display:grid;gap:6px"><button type="button" id="mt_copy" class="menu_button">复制诊断报告</button><button type="button" id="mt_save" class="menu_button">下载诊断报告</button><button type="button" id="mt_clear" class="menu_button">清空日志</button></div>
           <small>日志不记录聊天正文。Voice Map 始终保留“${DEFAULT_NAME}”。</small>
         </div>`;
+    }
+
+    seedVoiceMap(saved) {
+        const map = { ...((saved && saved.voiceMap) || this.settings?.voiceMap || {}) };
+
+        // MultiTTS is intentionally used without voice=. The Android app owns narrator selection.
+        // Make SillyTavern's own Voice Map resolve every current character to that one provider voice.
+        map[CORE_DEFAULT] = DEFAULT_NAME;
+
+        try {
+            for (const name of getCharacters(false)) {
+                if (!name || name === 'SillyTavern System' || name === CORE_DEFAULT) continue;
+                const current = map[name];
+                if (!current || current === CORE_DISABLED || current === CORE_DEFAULT) {
+                    map[name] = DEFAULT_NAME;
+                }
+            }
+        } catch (e) {
+            this.log?.('WARN', `Could not enumerate current Voice Map characters: ${err(e)}`);
+        }
+
+        this.settings.voiceMap = map;
+
+        // Mutate the object SillyTavern passed us as well, so initVoiceMap() sees the seeded values
+        // immediately during provider loading.
+        if (saved && typeof saved === 'object') {
+            saved.voiceMap = { ...map };
+        }
+
+        return map;
     }
 
     async loadSettings(saved) {
@@ -88,6 +120,7 @@ export class MultiTtsProvider {
         this.settings.endpoint = baseUrl(this.settings.endpoint);
         this.settings.cachedVoices = Array.isArray(this.settings.cachedVoices) ? this.settings.cachedVoices.map(voice).filter(Boolean) : [];
         this.voices = [defaultVoice(), ...this.settings.cachedVoices];
+        this.seedVoiceMap(saved);
         $('#mt_url').val(this.settings.endpoint); $('#mt_s').val(this.settings.speed); $('#mt_v').val(this.settings.volume); $('#mt_p').val(this.settings.pitch); this.labels();
         for (const id of ['#mt_url','#mt_s','#mt_v','#mt_p']) $(id).off('.mt').on('input.mt change.mt', () => this.saveUi());
         $('#mt_play').off('.mt').on('click.mt', () => this.testPlay());
@@ -102,7 +135,15 @@ export class MultiTtsProvider {
         this.cspHandler = e => { const x={directive:e.effectiveDirective||e.violatedDirective,blockedURI:e.blockedURI}; this.csp.push(x); this.log('CSP', `${x.directive} blocked ${x.blockedURI}`); };
         document.addEventListener('securitypolicyviolation', this.cspHandler);
         this.log('INFO', `Provider v${VERSION} loaded; cached voices=${this.settings.cachedVoices.length}`);
-        this.status('请先运行完整诊断，再测试默认声音。', true);
+        this.log('INFO', 'Seeded SillyTavern Voice Map to MultiTTS APP-default voice', { voiceMap: this.settings.voiceMap });
+        this.status('默认模式：不请求 voice 参数，由 MultiTTS APP 自己决定声音。', true);
+
+        // Rebuild SillyTavern's native Voice Map now, so manual narration has an entry for Assistant/character.
+        try {
+            await initVoiceMap(false);
+        } catch (e) {
+            this.log('WARN', `initVoiceMap during provider load: ${err(e)}`);
+        }
     }
 
     dispose() { if (this.cspHandler) document.removeEventListener('securitypolicyviolation', this.cspHandler); try { this.audio.pause(); } catch {} }
@@ -113,6 +154,7 @@ export class MultiTtsProvider {
     status(s, ok) { $('#mt_status').text(s).css('color', ok?'':'var(--warning-color,#d9a441)'); }
 
     // Critical: core calls this automatically. Do NOT network here; CORS must never break provider initialization.
+    async checkReady() { return true; }
     async fetchTtsVoiceObjects() { return this.voices; }
     async onRefreshClick() { await this.loadVoices(true); return this.voices; }
     async getVoice(name) { const n=String(name||DEFAULT_ID); return this.voices.find(v=>v.name===n||v.voice_id===n) || (n?{name:n,voice_id:n,lang:'zh-CN'}:defaultVoice()); }
