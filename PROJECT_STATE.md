@@ -1,10 +1,8 @@
 # Project State
 
-**Line:** 2.0.0-alpha.1  
-**Status:** Working installable alpha; small UX polish planned
+**Line:** 2.0.0-alpha.2  
+**Status:** Installable alpha
 
-Real-device testing confirms the independent narrator and gap-free prepared-segment handoff are usable. Preserve that playback path.
+Real-device testing confirms the independent narrator and gap-free prepared-segment handoff are usable. Alpha.2 keeps that playback path and adds Chinese UI, optional speed/volume/pitch parameters, segment sizes up to 1000, semantic newline/sentence splitting, previous/next controls, and per-message narration using SillyTavern's existing message controls.
 
-Next patch: Chinese-only UI, optional speed/volume/pitch parameters, segment limit up to 1000, strict newline-first/rightmost-sentence segmentation, previous/next transport controls, and a per-message Narrator action using SillyTavern's existing message controls.
-
-Rendered-text highlighting/click-to-seek is a follow-up only if it can be mapped safely without making DOM text canonical.
+Rendered-text highlighting and click-to-seek remain intentionally deferred.
