@@ -2,7 +2,7 @@ import { eventSource, event_types } from '../../../../script.js';
 import { getCharacters, initVoiceMap, registerTtsProvider, saveTtsProviderSettings } from '../../tts/index.js';
 
 const NAME = 'MultiTTS';
-const VERSION = '1.2.1';
+const VERSION = '1.2.2';
 const DEFAULT_ID = '__multitts_default__';
 const CORE_DEFAULT = '[Default Voice]';
 const CORE_DISABLED = 'disabled';
@@ -50,6 +50,35 @@ function forwardUrl(base, text, voiceId, s) {
     return u.toString();
 }
 
+function splitForMultiTts(text, maxChars = 70) {
+    const chars = Array.from(String(text ?? '').replace(/\s+/g, ' ').trim());
+    const max = Math.max(20, Math.min(200, Number(maxChars) || 70));
+    if (chars.length <= max) return chars.length ? [chars.join('')] : [];
+
+    const result = [];
+    let start = 0;
+    while (start < chars.length) {
+        let end = Math.min(start + max, chars.length);
+        if (end < chars.length) {
+            // Prefer natural punctuation near the end of the chunk.
+            const minBreak = start + Math.floor(max * 0.45);
+            let cut = -1;
+            for (let i = end - 1; i >= minBreak; i--) {
+                if (/[。！？!?；;，,、：:]/.test(chars[i])) {
+                    cut = i + 1;
+                    break;
+                }
+            }
+            if (cut > start) end = cut;
+        }
+
+        const chunk = chars.slice(start, end).join('').trim();
+        if (chunk) result.push(chunk);
+        start = end;
+    }
+    return result;
+}
+
 export class MultiTtsProvider {
     settings;
     voices = [defaultVoice()];
@@ -58,7 +87,7 @@ export class MultiTtsProvider {
     logs = [];
     csp = [];
     cspHandler = null;
-    defaultSettings = { voiceMap: {}, endpoint: 'http://127.0.0.1:8774', speed: 50, volume: 100, pitch: 50, cachedVoices: [] };
+    defaultSettings = { voiceMap: {}, endpoint: 'http://127.0.0.1:8774', speed: 50, volume: 100, pitch: 50, chunkChars: 70, cachedVoices: [] };
 
     get settingsHtml() {
         return `<div class="multitts-settings">
@@ -67,6 +96,8 @@ export class MultiTtsProvider {
           <label>语速 <span id="mt_sv">50</span></label><input id="mt_s" type="range" min="0" max="100" value="50">
           <label>音量 <span id="mt_vv">100</span></label><input id="mt_v" type="range" min="0" max="100" value="100">
           <label>音高 <span id="mt_pv">50</span></label><input id="mt_p" type="range" min="0" max="100" value="50">
+          <label>长文本分块上限 <span id="mt_cv">70</span> 字</label><input id="mt_c" type="range" min="20" max="160" step="5" value="70">
+          <small>正文超过这个长度时会按中文标点优先切成多个 /forward 请求，SillyTavern 会逐块排队播放。用于避开 MultiTTS 上游 10 秒超时。</small>
           <hr><b>实际可用性</b><div style="display:grid;gap:6px;margin:6px 0">
             <button type="button" id="mt_play" class="menu_button">① 测试默认声音（真正播放）</button>
             <button type="button" id="mt_voices" class="menu_button">② 读取 /voices 并导入音色</button>
@@ -121,8 +152,8 @@ export class MultiTtsProvider {
         this.settings.cachedVoices = Array.isArray(this.settings.cachedVoices) ? this.settings.cachedVoices.map(voice).filter(Boolean) : [];
         this.voices = [defaultVoice(), ...this.settings.cachedVoices];
         this.seedVoiceMap(saved);
-        $('#mt_url').val(this.settings.endpoint); $('#mt_s').val(this.settings.speed); $('#mt_v').val(this.settings.volume); $('#mt_p').val(this.settings.pitch); this.labels();
-        for (const id of ['#mt_url','#mt_s','#mt_v','#mt_p']) $(id).off('.mt').on('input.mt change.mt', () => this.saveUi());
+        $('#mt_url').val(this.settings.endpoint); $('#mt_s').val(this.settings.speed); $('#mt_v').val(this.settings.volume); $('#mt_p').val(this.settings.pitch); $('#mt_c').val(this.settings.chunkChars); this.labels();
+        for (const id of ['#mt_url','#mt_s','#mt_v','#mt_p','#mt_c']) $(id).off('.mt').on('input.mt change.mt', () => this.saveUi());
         $('#mt_play').off('.mt').on('click.mt', () => this.testPlay());
         $('#mt_voices').off('.mt').on('click.mt', () => this.loadVoices(true));
         $('#mt_diag').off('.mt').on('click.mt', () => this.diagnose());
@@ -147,8 +178,8 @@ export class MultiTtsProvider {
     }
 
     dispose() { if (this.cspHandler) document.removeEventListener('securitypolicyviolation', this.cspHandler); try { this.audio.pause(); } catch {} }
-    labels() { $('#mt_sv').text(this.settings.speed); $('#mt_vv').text(this.settings.volume); $('#mt_pv').text(this.settings.pitch); }
-    saveUi() { this.settings.endpoint=baseUrl($('#mt_url').val()); this.settings.speed=+$('#mt_s').val(); this.settings.volume=+$('#mt_v').val(); this.settings.pitch=+$('#mt_p').val(); this.labels(); saveTtsProviderSettings(); }
+    labels() { $('#mt_sv').text(this.settings.speed); $('#mt_vv').text(this.settings.volume); $('#mt_pv').text(this.settings.pitch); $('#mt_cv').text(this.settings.chunkChars); }
+    saveUi() { this.settings.endpoint=baseUrl($('#mt_url').val()); this.settings.speed=+$('#mt_s').val(); this.settings.volume=+$('#mt_v').val(); this.settings.pitch=+$('#mt_p').val(); this.settings.chunkChars=Math.max(20,Math.min(160,+$('#mt_c').val()||70)); this.labels(); saveTtsProviderSettings(); }
     log(level, msg, data) { const line=`[${new Date().toLocaleTimeString()}] [${level}] ${msg}${data===undefined?'':`\n${JSON.stringify(data,null,2)}`}`; this.logs.push(line); this.render(); (level==='ERROR'||level==='CSP'?console.warn:console.info)('[MultiTTS]',msg,data??''); }
     render() { const e=$('#mt_log'); if(e.length){e.text(this.logs.join('\n')); const n=e.get(0); if(n)n.scrollTop=n.scrollHeight;} }
     status(s, ok) { $('#mt_status').text(s).css('color', ok?'':'var(--warning-color,#d9a441)'); }
@@ -182,10 +213,24 @@ export class MultiTtsProvider {
         catch(e){this.log('ERROR',`manual JSON: ${err(e)}`);this.status(`手动导入失败：${err(e)}`,false);}
     }
 
-    async generateTts(text, voiceId) {
-        const u=forwardUrl(this.settings.endpoint,text,voiceId,this.settings);
-        this.log('TTS','return direct audio URL',{voice:voiceId===DEFAULT_ID?'(omitted/API default)':voiceId,textLength:String(text??'').length,speed:this.settings.speed,volume:this.settings.volume,pitch:this.settings.pitch});
-        return u;
+    async *generateTts(text, voiceId) {
+        const chunks = splitForMultiTts(text, this.settings.chunkChars);
+        this.log('TTS','queue direct audio URL chunks',{
+            voice:voiceId===DEFAULT_ID?'(omitted/API default)':voiceId,
+            textLength:Array.from(String(text??'')).length,
+            chunks:chunks.length,
+            chunkChars:this.settings.chunkChars,
+            chunkLengths:chunks.map(x=>Array.from(x).length),
+            speed:this.settings.speed,
+            volume:this.settings.volume,
+            pitch:this.settings.pitch
+        });
+
+        for (let i = 0; i < chunks.length; i++) {
+            const u = forwardUrl(this.settings.endpoint, chunks[i], voiceId, this.settings);
+            this.log('TTS',`yield chunk ${i + 1}/${chunks.length}`,{length:Array.from(chunks[i]).length});
+            yield u;
+        }
     }
 
     async previewTtsVoice(voiceId) { return this.playAudio(voiceId,'voice preview'); }
@@ -224,7 +269,7 @@ export class MultiTtsProvider {
         this.log('RESULT','conclusion',out); this.status(out.join('\n'),media); this.log('INFO','========== FULL DIAGNOSTIC END ==========');
     }
 
-    report() { return `SillyTavern MultiTTS Diagnostic\nPlugin: ${VERSION}\nGenerated: ${new Date().toISOString()}\nOrigin: ${location.origin}\nEndpoint: ${baseUrl(this.settings.endpoint)}\n\n${this.logs.join('\n')}`; }
+    report() { return `SillyTavern MultiTTS Diagnostic\nPlugin: ${VERSION}\nGenerated: ${new Date().toISOString()}\nOrigin: ${location.origin}\nEndpoint: ${baseUrl(this.settings.endpoint)}\nChunk chars: ${this.settings.chunkChars}\n\n${this.logs.join('\n')}`; }
     async copyReport(){try{await navigator.clipboard.writeText(this.report());this.status('诊断报告已复制。',true);}catch(e){this.log('ERROR',`copy report: ${err(e)}`);}}
     saveReport(){const u=URL.createObjectURL(new Blob([this.report()],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=u;a.download=`multitts-diagnostic-${Date.now()}.txt`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);}
 }
