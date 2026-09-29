@@ -45,3 +45,15 @@ Each segment is `queued → loading → ready → playing → ended`, with `erro
 Alpha keeps one active narration plus at most one latest pending automatic message. Manual narration has explicit priority. A segment gets at most one automatic retry; exhausted failures require Retry / Skip / Stop.
 
 The recovery checkpoint stores only chat/message identifiers, revision hash, segment index/time, settings hash, status and timestamp. Restore reconstructs text from SillyTavern and waits for an explicit Resume action.
+
+## Next polish
+
+The next patch is deliberately small and must not disturb the proven preload/playback handoff.
+
+- UI copy becomes Chinese-only.
+- Speed / volume / pitch become one optional parameter group. When disabled, `/forward` sends only `text`.
+- Segment-size UI/validation increases to 1000 code points.
+- Every source line is a hard segment boundary, including one-character lines. A long line splits at the rightmost sentence-ending punctuation within the configured limit; weaker punctuation and then the hard limit are fallbacks.
+- Compact controls add previous/next segment. Retry remains contextual to an actual error instead of occupying a normal transport slot.
+- Any assistant message can be narrated from its own message action. The button should reuse SillyTavern's existing message-action container/style and resolve text by `mesid` through canonical chat state; DOM text is never the source.
+- Exact rendered-text highlighting/click-to-seek is deferred until canonical segments can be mapped to rendered Markdown safely. Whole-message/segment navigation must not mutate SillyTavern message content.
