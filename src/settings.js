@@ -1,5 +1,5 @@
 export const SETTINGS_KEY = 'multiTtsNarrator';
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 3;
 export const CHECKPOINT_KEY = 'st-multitts-narrator:checkpoint:v1';
 
 export const DEFAULT_SETTINGS = Object.freeze({
@@ -8,6 +8,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
     autoNarrate: true,
     endpoint: 'http://127.0.0.1:8774',
     sendProsodyParams: true,
+    skipCodeBlocks: false,
+    skipTagBlocks: false,
     speed: 50,
     volume: 100,
     pitch: 50,
@@ -30,6 +32,8 @@ export function normalizeSettings(raw = {}) {
         autoNarrate: Boolean(raw.autoNarrate ?? DEFAULT_SETTINGS.autoNarrate),
         endpoint: String(raw.endpoint || DEFAULT_SETTINGS.endpoint).trim(),
         sendProsodyParams: Boolean(raw.sendProsodyParams ?? DEFAULT_SETTINGS.sendProsodyParams),
+        skipCodeBlocks: Boolean(raw.skipCodeBlocks ?? DEFAULT_SETTINGS.skipCodeBlocks),
+        skipTagBlocks: Boolean(raw.skipTagBlocks ?? DEFAULT_SETTINGS.skipTagBlocks),
         speed: clamp(raw.speed, 0, 100, DEFAULT_SETTINGS.speed),
         volume: clamp(raw.volume, 0, 100, DEFAULT_SETTINGS.volume),
         pitch: clamp(raw.pitch, 0, 100, DEFAULT_SETTINGS.pitch),
@@ -50,6 +54,8 @@ export function settingsFingerprintInput(settings) {
     const fingerprint = {
         endpoint: s.endpoint,
         sendProsodyParams: s.sendProsodyParams,
+        skipCodeBlocks: s.skipCodeBlocks,
+        skipTagBlocks: s.skipTagBlocks,
         segmentChars: s.segmentChars,
         lookAhead: s.lookAhead,
         maxInFlight: s.maxInFlight,
