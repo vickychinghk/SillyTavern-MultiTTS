@@ -1,109 +1,129 @@
 # SillyTavern MultiTTS
 
-Use an Android phone's local **MultiTTS forwarding service** as a native SillyTavern TTS provider.
+Use the Android **MultiTTS** local forwarding service as a SillyTavern TTS provider.
 
-## Current version
+## Current release
 
-**v1.1.0**
+**v1.2.0 Diagnostic**
 
-This version is designed specifically for the case where:
+This release intentionally contains extra diagnostics. Once the browser/SillyTavern/MultiTTS interaction is fully understood, the diagnostic UI can be reduced.
 
-- SillyTavern is hosted on a remote server
-- SillyTavern is opened in Chrome/Chromium on the Android phone
-- MultiTTS is installed on that same phone
-- MultiTTS forwarding service is enabled on port 8774
+## Confirmed MultiTTS API
 
-## MultiTTS endpoints
+Evidence used for this integration:
 
-- `GET http://127.0.0.1:8774/voices`
-- `GET http://127.0.0.1:8774/forward?text=...&speed=...&volume=...&pitch=...&voice=...`
+1. MultiTTS app's own forwarding-service help text:
+   - `GET http://localhost:8774/forward`
+   - parameters: `text`, `speed`, `volume`, `pitch`, `voice`
+   - `GET http://localhost:8774/voices`
+2. BaiTTS-CLI-rs, a community tool explicitly built on the MultiTTS API:
+   - base URL example: `http://127.0.0.1:8774`
+   - `/voices` response parsed as `{ success, data: { catalog: { provider: Voice[] } } }`
+   - Voice fields: `id`, `name`, `gender`, `locale`, `type`
+   - speech generation uses GET `/forward` with optional `voice`, `volume`, `speed`, `pitch` and required `text`
 
-## Why v1.1 works differently
+BaiTTS-CLI-rs is not claimed to be the official MultiTTS source repository; it is used only as an independent implementation confirming the public API shape.
 
-Opening `/forward` in the browser can work even when JavaScript `fetch()` from a remote SillyTavern page is blocked by CORS/local-network browser rules.
+## Why the diagnostic release exists
 
-SillyTavern's TTS core accepts a **direct audio URL string**, so v1.1 returns the `/forward?... ` URL directly to SillyTavern's audio player instead of fetching the WAV with JavaScript.
+A URL opened directly in a browser tab and the same URL accessed by JavaScript from a remote SillyTavern page are different security contexts.
 
-That means actual TTS playback does not require CORS permission to read the audio response.
+For a remote SillyTavern origin such as HTTPS -> `http://127.0.0.1:8774`, possible blockers include:
 
-The `/voices` endpoint is still fetched with JavaScript because the provider needs to read the JSON. If that is blocked, the provider falls back to:
+- CORS
+- browser Local Network / loopback permissions
+- CSP `connect-src`
+- browser mixed-content / local-network rules
+- media-loading policy
+
+v1.2 tests those paths separately.
+
+## Important design rule
+
+The provider's normal `fetchTtsVoiceObjects()` does **not** automatically call the network. It returns cached voices plus a permanent fallback:
 
 **MultiTTS 默认声音（使用 APP 当前旁白）**
 
-This fallback omits the `voice=` parameter, so MultiTTS uses the narrator/default voice currently selected in the Android app.
+This prevents SillyTavern's own Voice Map initialization from failing just because `/voices` cannot be read through JavaScript.
 
-## Real MultiTTS voice-list format
+Actual TTS generation returns a direct `/forward?... ` URL string to SillyTavern's native audio player, so it can work even when JavaScript cannot read the WAV response because of CORS.
 
-v1.1 supports the format used by existing MultiTTS integrations:
+## Diagnostic tools
 
-```text
-{
-  "success": true,
-  "data": {
-    "catalog": {
-      "...group...": [
-        {
-          "id": "...",
-          "name": "...",
-          "gender": "...",
-          "locale": "..."
-        }
-      ]
-    }
-  }
-}
-```
+The provider UI contains:
 
-It flattens all groups in `data.catalog` and exposes them to SillyTavern's Voice Map.
+1. **测试默认声音（真正播放）**
+   - Loads `/forward` through an HTML audio element.
+   - Does not require JavaScript to read the WAV response.
 
-## Install / update from SillyTavern
+2. **读取 /voices 并导入音色**
+   - Performs a CORS fetch of `/voices`.
+   - Parses `data.catalog`, caches voices, and refreshes SillyTavern Voice Map.
 
-Repository URL:
+3. **运行完整诊断**
+   Tests:
+   - page origin / protocol / secure-context state
+   - browser user agent
+   - local/loopback permission APIs when exposed
+   - Permissions Policy checks when exposed
+   - `/voices` with `no-cors`
+   - `/voices` with `cors`
+   - JSON parsing and voice count
+   - `/forward` with `no-cors`
+   - `/forward` with `cors`
+   - direct HTML audio loading of `/forward`
+   - CSP violation events that mention localhost / 127.0.0.1 / port 8774
+
+4. **新标签页打开 /voices**
+5. **新标签页打开 /forward**
+
+These distinguish top-level navigation from page JavaScript and media loading.
+
+6. **手动粘贴 /voices JSON**
+   - If direct browser navigation can display `/voices` but the remote page cannot read it because of CORS, copy the returned JSON and paste it into the provider.
+   - Parsed voices are cached in SillyTavern settings and become available in Voice Map.
+
+7. **复制诊断报告 / 下载诊断报告**
+   - Logs environment and network-test results.
+   - Does not intentionally log chat message contents; TTS log entries record text length only.
+
+## Installation
+
+Repository:
 
 `https://github.com/vickychinghk/SillyTavern-MultiTTS`
 
-For a new install:
-
-1. Open **Extensions**
-2. Choose **Install Extension**
-3. Paste the repository URL
-4. If asked for a branch, use `main`
-5. On a multi-user server, choose **current user only**
-6. Install and refresh the SillyTavern page
-
-For an existing install:
+For existing installs:
 
 1. Open **Extensions**
 2. Open **Manage extensions**
 3. Find **MultiTTS (Android Local)**
-4. Use its update action to pull the latest commit
-5. Refresh the page
+4. Update it
+5. Refresh the SillyTavern page
+6. Confirm version **1.2.0**
 
-## Use
+## Recommended test order
 
-1. Enable MultiTTS's forwarding service on Android.
-2. Confirm this opens in the same phone browser:
-   `http://127.0.0.1:8774/forward?text=你好&speed=50&volume=100&pitch=50`
-3. In SillyTavern, open **TTS**
-4. Select **MultiTTS**
-5. Keep endpoint:
-   `http://127.0.0.1:8774`
-6. Press **测试默认声音**
-7. If that works, the audio path is working.
-8. Press **尝试读取音色列表**
-9. If voice reading fails but default audio works, simply choose **MultiTTS 默认声音（使用 APP 当前旁白）** in Voice Map.
+1. Enable MultiTTS forwarding service.
+2. In the same Android browser, confirm `http://127.0.0.1:8774/forward?text=你好&speed=50&volume=100&pitch=50` plays/downloads audio.
+3. Select **MultiTTS** in SillyTavern TTS.
+4. Run **③ 运行完整诊断** first.
+5. Then run **① 测试默认声音（真正播放）**.
+6. Then run **② 读取 /voices 并导入音色**.
+7. If voice reading fails but direct `/voices` navigation works, paste the complete `/voices` JSON into the manual-import box.
+8. Copy the diagnostic report and provide it when troubleshooting.
 
-## Settings
+## Normal API behavior
 
-- Endpoint
-- Speed: 0-100
-- Volume: 0-100
-- Pitch: 0-100
-- Test default audio
-- Try to load voice list
+```text
+GET /voices
 
-## Notes
+GET /forward
+  ?text=<required>
+  &voice=<optional>
+  &volume=0..100
+  &speed=0..100
+  &pitch=0..100
+```
 
-If Chrome asks whether the site may access the local network or local devices, allow it.
-
-If `/voices` cannot be read from the SillyTavern page but opens correctly in a separate browser tab, that usually indicates a browser cross-origin/local-network restriction rather than a MultiTTS server failure.
+When `voice` is omitted, MultiTTS's current/default narrator is used.
