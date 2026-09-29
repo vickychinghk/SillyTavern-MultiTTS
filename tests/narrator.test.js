@@ -231,3 +231,24 @@ test('previous segment reloads only the previous audio and keeps prepared curren
     assert.equal(controller.session.currentIndex, 0);
     assert.equal(controller.getSnapshot().status, 'playing');
 });
+
+
+test('previous segment gets loading priority while current segment is still buffering', async () => {
+    const { host, slots, controller } = makeController('甲甲甲甲甲甲甲甲甲甲甲。乙乙乙乙乙乙乙乙乙乙乙。', { maxInFlight: 2 });
+    await controller.narrateCandidate(host.candidate(), 'manual');
+    const first = byIndex(slots, 0);
+    const second = byIndex(slots, 1);
+    first.emit('ready');
+    await Promise.resolve();
+    first.emit('ended');
+    await Promise.resolve();
+    assert.equal(controller.session.currentIndex, 1);
+    assert.equal(controller.session.segments[1].state, 'loading');
+
+    assert.equal(controller.previous(), true);
+    assert.equal(second.disposed, true);
+    const replayedFirst = byIndex(slots, 0);
+    assert.notEqual(replayedFirst, first);
+    assert.equal(controller.session.currentIndex, 0);
+    assert.equal(controller.session.segments[0].state, 'loading');
+});
