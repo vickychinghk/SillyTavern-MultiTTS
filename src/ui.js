@@ -14,6 +14,7 @@ const REASON_TEXT = {
     restore: '已恢复播放位置，请点击播放。',
     disabled: '请在设置中启用旁白。',
     'no-message': '没有可播放的助手回复。',
+    'empty-text': '回复经过格式过滤后没有可朗读的文字，请检查内容格式。',
     endpoint: 'MultiTTS 地址无效。',
     'background-paused': '后台播放已中断，请点击播放。',
 };
