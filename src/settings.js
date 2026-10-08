@@ -109,6 +109,9 @@ const MAX_DIAGNOSTIC_EVENTS = 2000;
 export class DiagnosticsStore {
     constructor(storage = globalThis.localStorage) {
         this.storage = storage;
+        this.flushTimer = null;
+        this.onPageHide = () => this.persist();
+        globalThis.window?.addEventListener?.('pagehide', this.onPageHide);
         try {
             const saved = JSON.parse(storage?.getItem(DIAGNOSTICS_KEY) || '[]');
             this.events = Array.isArray(saved) ? saved.slice(-MAX_DIAGNOSTIC_EVENTS) : [];
@@ -120,7 +123,8 @@ export class DiagnosticsStore {
     append(entry) {
         this.events.push(entry);
         if (this.events.length > MAX_DIAGNOSTIC_EVENTS) this.events.shift();
-        this.persist();
+        // Avoid synchronous localStorage serialization on the critical audio handoff.
+        if (this.flushTimer === null) this.flushTimer = setTimeout(() => this.persist(), 500);
     }
 
     read() {
@@ -128,11 +132,15 @@ export class DiagnosticsStore {
     }
 
     clear() {
+        if (this.flushTimer !== null) clearTimeout(this.flushTimer);
+        this.flushTimer = null;
         this.events = [];
         try { this.storage?.removeItem(DIAGNOSTICS_KEY); } catch {}
     }
 
     persist() {
+        if (this.flushTimer !== null) clearTimeout(this.flushTimer);
+        this.flushTimer = null;
         try {
             this.storage?.setItem(DIAGNOSTICS_KEY, JSON.stringify(this.events));
         } catch {
@@ -140,6 +148,11 @@ export class DiagnosticsStore {
             this.events = this.events.slice(-Math.floor(MAX_DIAGNOSTIC_EVENTS / 2));
             try { this.storage?.setItem(DIAGNOSTICS_KEY, JSON.stringify(this.events)); } catch {}
         }
+    }
+
+    dispose() {
+        this.persist();
+        globalThis.window?.removeEventListener?.('pagehide', this.onPageHide);
     }
 }
 
