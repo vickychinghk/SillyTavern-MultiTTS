@@ -422,13 +422,8 @@ export class NarratorController {
             await segment.slot.play();
             if (this.session !== session || session.currentIndex !== segment.index) return;
             if (segment.state === 'ready') {
-                segment.state = 'playing';
-                session.resumeTime = 0;
-                session.playRequestIndex = null;
-                this.status = 'playing';
-                this.reason = null;
-                this.writeCheckpoint();
-                this.emit();
+                // Some browsers resolve play() before dispatching "playing".
+                this.onSlotEvent(session.id, session.generation, segment.index, 'playing', segment.slot);
             }
         } catch (error) {
             if (this.session !== session) return;
