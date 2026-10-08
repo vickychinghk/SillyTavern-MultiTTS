@@ -47,6 +47,13 @@ export class AudioSlot {
             },
             playing: () => this.disposed || this.onEvent?.('playing', this),
             ended: () => this.disposed || this.onEvent?.('ended', this),
+            waiting: () => this.disposed || this.onEvent?.('waiting', this),
+            stalled: () => this.disposed || this.onEvent?.('stalled', this),
+            progress: () => this.disposed || this.onEvent?.('progress', this),
+            loadedmetadata: () => this.disposed || this.onEvent?.('loadedmetadata', this),
+            canplaythrough: () => this.disposed || this.onEvent?.('canplaythrough', this),
+            seeking: () => this.disposed || this.onEvent?.('seeking', this),
+            seeked: () => this.disposed || this.onEvent?.('seeked', this),
             error: () => this.disposed || this.onEvent?.('error', this, { code: this.audio.error?.code ?? null }),
         };
         this.audio.preload = 'auto';
@@ -59,8 +66,8 @@ export class AudioSlot {
         if (this.disposed) return;
         this.loadStartedAt = performance.now?.() ?? Date.now();
         this.audio.src = buildForwardUrl(this.settings.endpoint, this.text, this.settings);
-        this.audio.load();
         this.onEvent?.('loading', this);
+        this.audio.load();
     }
 
     async play() {
@@ -82,11 +89,25 @@ export class AudioSlot {
     }
 
     getState() {
+        const currentTime = this.getCurrentTime();
+        let bufferedAhead = null;
+        try {
+            const ranges = this.audio.buffered;
+            for (let index = 0; index < ranges.length; index++) {
+                if (ranges.start(index) <= currentTime && ranges.end(index) >= currentTime) {
+                    bufferedAhead = Math.round((ranges.end(index) - currentTime) * 1000);
+                    break;
+                }
+            }
+        } catch {}
         return {
             paused: Boolean(this.audio.paused),
             ended: Boolean(this.audio.ended),
             readyState: Number(this.audio.readyState || 0),
-            currentTime: this.getCurrentTime(),
+            networkState: Number(this.audio.networkState || 0),
+            currentTime,
+            duration: Number.isFinite(this.audio.duration) ? this.audio.duration : null,
+            bufferedAheadMs: bufferedAhead,
         };
     }
 
