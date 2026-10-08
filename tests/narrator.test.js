@@ -282,3 +282,14 @@ test('diagnostics include the real next-segment gap and buffer wait', async () =
     assert.ok(controller.diagnostics.some(event => event.event === 'media-waiting' && event.index === 0));
     assert.ok(controller.diagnostics.some(event => event.event === 'segment-ready' && event.index === 1 && Number.isFinite(event.loadMs)));
 });
+
+test('comment-only assistant replies report why nothing can be narrated', async () => {
+    const { controller } = makeController('<!-- hidden preset instructions -->');
+    const ok = await controller.narrateLatestManual();
+    assert.equal(ok, false);
+    assert.equal(controller.getSnapshot().reason, 'empty-text');
+    const event = controller.diagnostics.find(item => item.event === 'source-empty-after-filter');
+    assert.ok(event);
+    assert.equal(event.originalChars > 0, true);
+    assert.equal(JSON.stringify(event).includes('hidden preset'), false);
+});
