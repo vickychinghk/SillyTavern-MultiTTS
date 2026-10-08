@@ -1,18 +1,15 @@
 # Testing
 
-## Automated
+Run `npm test && npm run check`.
 
-```bash
-npm test
-npm run check
-```
+Unit tests cover segmentation and HTML comments, bounded persistent diagnostics, native media URL handling, strict playback order, gap telemetry, pause/resume, retries, mutations and checkpoints.
 
-Tests cover semantic segmentation, code/tag filtering, URL parameters, ordered preload playback, pause/resume, previous/next, explicit message selection, retry, mutation recovery and checkpoint privacy.
+## Manual Android / SillyTavern acceptance
 
-## Android acceptance
+1. Drag the headphones icon to all screen edges, refresh, and confirm its position persists. Open/close the panel and verify no interaction with the underlying chat is blocked.
+2. Confirm playback, settings and logs stay inside the panel; disabled narration must still allow settings access.
+3. Play a mixed-format assistant reply containing hidden `<!-- comments -->`, visible styled `<p>` elements and plain text. Verify the comments/markup are not narrated, visible paragraphs are.
+4. Play multi-segment replies; compare `segment-ended` to the following `segment-playing.gapMs`, inspect `loadMs`, `startDelayMs`, `stalledMs`, and buffered-ahead samples. Test foreground/background and failed endpoints.
+5. Refresh and confirm logs persist, then copy the complete report; clear and confirm the journal resets. Review the endpoint metadata before sharing logs.
 
-1. **Message controls:** each assistant message keeps the right-side MultiTTS action; standard layouts also show the same action immediately after the username.
-2. **Filters:** verify “跳过代码块” removes ``` / ~~~ fenced blocks and “跳过标签块里的内容” removes paired tagged content such as `<Tag>跳过这里</Tag>`.
-3. **Regression:** verify text-only requests, semantic segmentation up to 1000, gap-free prepared-segment transitions, previous/next, failures, privacy and background recovery.
-
-The default 70-character segment size and 3-way preload remain conservative calibration defaults.
+No browser unit test substitutes for real device audio timing.

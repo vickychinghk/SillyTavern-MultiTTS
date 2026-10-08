@@ -15,7 +15,7 @@ function isActiveStatus(status) {
 }
 
 export class NarratorController {
-    constructor({ host, settingsStore, checkpointStore, mediaFactory, now = () => Date.now(), idFactory = makeId }) {
+    constructor({ host, settingsStore, checkpointStore, mediaFactory, diagnosticsStore = null, now = () => Date.now(), idFactory = makeId }) {
         this.host = host;
         this.settingsStore = settingsStore;
         this.checkpointStore = checkpointStore;
@@ -28,13 +28,15 @@ export class NarratorController {
         this.pendingAuto = null;
         this.lastCompletedKey = null;
         this.listeners = new Set();
-        this.diagnostics = [];
+        this.diagnosticsStore = diagnosticsStore;
+        this.diagnostics = diagnosticsStore?.read() ?? [];
         this.healthBusy = false;
         this.disposed = false;
         this.settingsUnsubscribe = this.settingsStore.subscribe(settings => {
             if (!settings.enabled && this.session) this.stop();
             this.emit();
         });
+        this.record('app-opened');
     }
 
     subscribe(listener) {
@@ -76,14 +78,26 @@ export class NarratorController {
     record(event, data = {}) {
         const entry = { at: this.now(), event, ...data };
         this.diagnostics.push(entry);
-        if (this.diagnostics.length > 120) this.diagnostics.splice(0, this.diagnostics.length - 120);
+        if (this.diagnostics.length > 2000) this.diagnostics.shift();
+        this.diagnosticsStore?.append(entry);
         if (this.settingsStore.get().debug) console.debug('[MultiTTS Narrator]', entry);
+    }
+
+    clearDiagnostics() {
+        this.diagnostics = [];
+        this.diagnosticsStore?.clear();
     }
 
     async sourceFromCandidate(candidate) {
         if (!candidate?.text || candidate.chatId === undefined || candidate.index === undefined) return null;
         const text = prepareNarrationText(candidate.text, this.settingsStore.get());
-        if (!text) return null;
+        if (!text) {
+            this.record('source-empty-after-filter', {
+                messageIndex: Number(candidate.index),
+                originalChars: Array.from(candidate.text).length,
+            });
+            return null;
+        }
         const revisionHash = await sha256Hex(JSON.stringify({
             chatId: String(candidate.chatId),
             index: Number(candidate.index),
@@ -134,7 +148,14 @@ export class NarratorController {
 
     async narrateCandidate(candidate, sourceMode = 'manual') {
         const source = await this.sourceFromCandidate(candidate);
-        if (!source) return false;
+        if (!source) {
+            if (sourceMode === 'manual') {
+                this.status = 'action-required';
+                this.reason = 'empty-text';
+                this.emit();
+            }
+            return false;
+        }
 
         if (sourceMode === 'auto') {
             if (this.session?.source.key === source.key || this.pendingAuto?.key === source.key || this.lastCompletedKey === source.key) return false;
@@ -157,7 +178,7 @@ export class NarratorController {
         if (!settings.enabled) return false;
 
         const segments = segmentNarrationText(source.text, settings.segmentChars);
-        if (!segments.length) return false;
+        if (!segments.length) { this.record('narration-empty', { messageIndex: source.index }); return false; }
         try { normalizeEndpoint(settings.endpoint); } catch {
             this.status = 'action-required';
             this.reason = 'endpoint';
@@ -184,6 +205,12 @@ export class NarratorController {
                 slot: null,
                 loadStartedAt: null,
                 readyAt: null,
+                playRequestedAt: null,
+                playingAt: null,
+                playedMs: 0,
+                waitingAt: null,
+                stalledMs: 0,
+                lastProgressAt: null,
             })),
             currentIndex,
             currentTime: Number(restore?.currentTime) || 0,
@@ -191,6 +218,7 @@ export class NarratorController {
             playRequestIndex: null,
             recentFailures: [],
             breakerOpen: false,
+            lastSegmentEndedAt: null,
         };
         this.session = session;
 
@@ -242,7 +270,7 @@ export class NarratorController {
             onEvent: (type, mediaSlot, detail) => this.onSlotEvent(sessionId, generation, segment.index, type, mediaSlot, detail),
         });
         segment.slot = slot;
-        this.record('segment-load', { index: segment.index, attempt: segment.attempts, length: segment.length });
+        this.record('segment-load', { index: segment.index, attempt: segment.attempts, length: segment.length, readyState: slot.getState?.().readyState ?? null });
         try {
             slot.load();
         } catch {
@@ -262,21 +290,56 @@ export class NarratorController {
             segment.readyAt = this.now();
             this.record('segment-ready', {
                 index,
-                loadMs: segment.loadStartedAt ? segment.readyAt - segment.loadStartedAt : null,
+                attempt: segment.attempts,
+                loadMs: segment.loadStartedAt == null ? null : segment.readyAt - segment.loadStartedAt,
+                media: slot.getState?.() ?? null,
             });
             this.fillWindow();
             this.tryPlay();
             return;
         }
 
+        if (['waiting', 'stalled', 'progress', 'loadedmetadata', 'canplaythrough', 'seeking', 'seeked'].includes(type)) {
+            const at = this.now();
+            if (type === 'progress' && segment.lastProgressAt !== null && at - segment.lastProgressAt < 2000) return;
+            if (type === 'progress') segment.lastProgressAt = at;
+            if (['waiting', 'stalled'].includes(type)) {
+                if (segment.playingAt !== null) {
+                    segment.playedMs += at - segment.playingAt;
+                    segment.playingAt = null;
+                }
+                if (segment.waitingAt === null) segment.waitingAt = at;
+            }
+            this.record('media-' + type, { index, media: slot.getState?.() ?? null });
+            if (['waiting', 'stalled'].includes(type) && index === session.currentIndex && this.status === 'playing') {
+                this.status = 'buffering';
+                this.emit();
+            }
+            return;
+        }
+
         if (type === 'playing') {
             if (index !== session.currentIndex) return;
+            const at = this.now();
+            if (segment.waitingAt !== null) {
+                segment.stalledMs += at - segment.waitingAt;
+                segment.waitingAt = null;
+            }
+            const gapMs = session.lastSegmentEndedAt === null ? null : at - session.lastSegmentEndedAt;
+            session.lastSegmentEndedAt = null; // Report the handoff once, not on subsequent rebuffer/resume.
+            const startDelayMs = segment.playRequestedAt === null ? null : at - segment.playRequestedAt;
+            if (segment.playingAt !== null) segment.playedMs += at - segment.playingAt;
+            segment.playingAt = at;
             segment.state = 'playing';
             session.playRequestIndex = null;
             session.resumeTime = 0;
             this.status = 'playing';
             this.reason = null;
-            this.record('segment-playing', { index });
+            this.record('segment-playing', {
+                index, gapMs, startDelayMs, stalledMs: segment.stalledMs,
+                readyToPlayingMs: segment.readyAt === null ? null : at - segment.readyAt,
+                media: slot.getState?.() ?? null,
+            });
             this.writeCheckpoint();
             this.emit();
             return;
@@ -285,13 +348,17 @@ export class NarratorController {
         if (type === 'ended') {
             if (index !== session.currentIndex) return;
             const wasPaused = this.status === 'paused';
+            const at = this.now();
+            const playbackMs = segment.playedMs + (segment.playingAt === null ? 0 : at - segment.playingAt);
+            const media = slot.getState?.() ?? null;
+            session.lastSegmentEndedAt = at;
             segment.state = 'ended';
             segment.slot?.dispose();
             segment.slot = null;
             session.playRequestIndex = null;
             session.currentIndex += 1;
             session.currentTime = 0;
-            this.record('segment-ended', { index });
+            this.record('segment-ended', { index, playbackMs, stalledMs: segment.stalledMs, media });
             this.writeCheckpoint();
             if (session.currentIndex >= session.segments.length) {
                 this.completeSession(session);
@@ -311,7 +378,11 @@ export class NarratorController {
         segment.slot?.dispose();
         segment.slot = null;
         session.playRequestIndex = null;
-        this.record('segment-error', { index: segment.index, attempt: segment.attempts, mediaCode: detail?.code ?? null });
+        this.record('segment-error', {
+            index: segment.index, attempt: segment.attempts, mediaCode: detail?.code ?? null,
+            playedMs: segment.playedMs, stalledMs: segment.stalledMs,
+            elapsedMs: segment.loadStartedAt === null ? null : this.now() - segment.loadStartedAt,
+        });
 
         if (segment.attempts <= session.settings.retryCount) {
             segment.state = 'queued';
@@ -366,25 +437,22 @@ export class NarratorController {
         if (session.playRequestIndex === segment.index) return;
 
         session.playRequestIndex = segment.index;
+        segment.playRequestedAt = this.now();
+        this.record('segment-play-request', { index: segment.index, readyWaitMs: segment.readyAt === null ? null : segment.playRequestedAt - segment.readyAt });
         if (session.resumeTime > 0) segment.slot?.seek(session.resumeTime);
         try {
             await segment.slot.play();
             if (this.session !== session || session.currentIndex !== segment.index) return;
             if (segment.state === 'ready') {
-                segment.state = 'playing';
-                session.resumeTime = 0;
-                session.playRequestIndex = null;
-                this.status = 'playing';
-                this.reason = null;
-                this.writeCheckpoint();
-                this.emit();
+                // Some browsers resolve play() before dispatching "playing".
+                this.onSlotEvent(session.id, session.generation, segment.index, 'playing', segment.slot);
             }
         } catch (error) {
             if (this.session !== session) return;
             session.playRequestIndex = null;
             this.status = 'action-required';
             this.reason = error?.name === 'NotAllowedError' ? 'autoplay' : 'playback-error';
-            this.record('play-rejected', { index: segment.index, category: this.reason });
+            this.record('play-rejected', { index: segment.index, category: this.reason, delayMs: this.now() - segment.playRequestedAt });
             this.writeCheckpoint();
             this.emit();
         }
@@ -396,11 +464,15 @@ export class NarratorController {
         const segment = session.segments[session.currentIndex];
         if (!segment?.slot) return false;
         segment.slot.pause();
+        if (segment.playingAt !== null) {
+            segment.playedMs += this.now() - segment.playingAt;
+            segment.playingAt = null;
+        }
         session.currentTime = segment.slot.getCurrentTime();
         session.resumeTime = session.currentTime;
         this.status = 'paused';
         this.reason = null;
-        this.record('paused', { index: session.currentIndex, currentTime: Math.round(session.currentTime * 10) / 10 });
+        this.record('paused', { index: session.currentIndex, currentTime: Math.round(session.currentTime * 10) / 10, playedMs: segment.playedMs });
         this.writeCheckpoint();
         this.emit();
         return true;
@@ -415,16 +487,19 @@ export class NarratorController {
         session.breakerOpen = false;
         this.status = 'buffering';
         this.reason = null;
+        this.record('resume-request', { index: session.currentIndex });
         const segment = session.segments[session.currentIndex];
         if (!segment) return false;
 
         if (segment.state === 'playing' && segment.slot) {
+            segment.playRequestedAt = this.now();
             if (session.resumeTime > 0) segment.slot.seek(session.resumeTime);
             try {
                 await segment.slot.play();
                 this.status = 'playing';
                 this.reason = null;
                 session.resumeTime = 0;
+                if (segment.playingAt === null) segment.playingAt = this.now();
                 this.writeCheckpoint();
                 this.emit();
                 return true;
@@ -506,6 +581,7 @@ export class NarratorController {
         this.status = 'buffering';
         this.reason = null;
         this.record('segment-previous', { index: targetIndex });
+        session.lastSegmentEndedAt = null;
         this.writeCheckpoint();
         this.fillWindow();
         this.tryPlay();
@@ -533,6 +609,7 @@ export class NarratorController {
         session.breakerOpen = false;
         session.recentFailures = [];
         this.record('segment-skipped', { index: segment.index });
+        session.lastSegmentEndedAt = null;
         if (session.currentIndex >= session.segments.length) {
             this.completeSession(session);
             return true;
@@ -753,7 +830,7 @@ export class NarratorController {
         try { endpoint = normalizeEndpoint(settings.endpoint); } catch {}
         return JSON.stringify({
             product: 'MultiTTS Narrator',
-            version: '2.0.0-alpha.3',
+            version: '2.0.0-alpha.4',
             generatedAt: new Date(this.now()).toISOString(),
             state: this.getSnapshot(),
             settings: {
@@ -769,7 +846,7 @@ export class NarratorController {
                 maxInFlight: settings.maxInFlight,
                 retryCount: settings.retryCount,
             },
-            events: this.diagnostics,
+            events: this.diagnosticsStore?.read() ?? this.diagnostics,
         }, null, 2);
     }
 
@@ -778,6 +855,7 @@ export class NarratorController {
         await this.stop({ clearPending: true, silent: true });
         this.disposed = true;
         this.settingsUnsubscribe?.();
+        this.diagnosticsStore?.dispose();
         this.listeners.clear();
     }
 }

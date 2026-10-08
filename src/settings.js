@@ -101,6 +101,61 @@ export class SettingsStore {
     }
 }
 
+
+export const DIAGNOSTICS_KEY = 'st-multitts-narrator:diagnostics:v1';
+const MAX_DIAGNOSTIC_EVENTS = 2000;
+
+// Bounded, durable, text-free event journal. Storage failure never blocks playback.
+export class DiagnosticsStore {
+    constructor(storage = globalThis.localStorage) {
+        this.storage = storage;
+        this.flushTimer = null;
+        this.onPageHide = () => this.persist();
+        globalThis.window?.addEventListener?.('pagehide', this.onPageHide);
+        try {
+            const saved = JSON.parse(storage?.getItem(DIAGNOSTICS_KEY) || '[]');
+            this.events = Array.isArray(saved) ? saved.slice(-MAX_DIAGNOSTIC_EVENTS) : [];
+        } catch {
+            this.events = [];
+        }
+    }
+
+    append(entry) {
+        this.events.push(entry);
+        if (this.events.length > MAX_DIAGNOSTIC_EVENTS) this.events.shift();
+        // Avoid synchronous localStorage serialization on the critical audio handoff.
+        if (this.flushTimer === null) this.flushTimer = setTimeout(() => this.persist(), 500);
+    }
+
+    read() {
+        return this.events.slice();
+    }
+
+    clear() {
+        if (this.flushTimer !== null) clearTimeout(this.flushTimer);
+        this.flushTimer = null;
+        this.events = [];
+        try { this.storage?.removeItem(DIAGNOSTICS_KEY); } catch {}
+    }
+
+    persist() {
+        if (this.flushTimer !== null) clearTimeout(this.flushTimer);
+        this.flushTimer = null;
+        try {
+            this.storage?.setItem(DIAGNOSTICS_KEY, JSON.stringify(this.events));
+        } catch {
+            // Under quota pressure retain the newest half, without throwing.
+            this.events = this.events.slice(-Math.floor(MAX_DIAGNOSTIC_EVENTS / 2));
+            try { this.storage?.setItem(DIAGNOSTICS_KEY, JSON.stringify(this.events)); } catch {}
+        }
+    }
+
+    dispose() {
+        this.persist();
+        globalThis.window?.removeEventListener?.('pagehide', this.onPageHide);
+    }
+}
+
 export class CheckpointStore {
     constructor(storage = globalThis.localStorage) {
         this.storage = storage;

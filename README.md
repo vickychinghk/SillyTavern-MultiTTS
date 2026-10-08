@@ -1,34 +1,24 @@
 # MultiTTS Narrator for SillyTavern
 
-Independent narration extension for SillyTavern + Android MultiTTS. It does **not** use SillyTavern's native TTS provider, Voice Map, TTS queue, or TTS playback controls.
+Lightweight narration extension for SillyTavern + Android MultiTTS. It uses its own HTML audio playback, not SillyTavern's built-in TTS provider or voice map.
 
-## Install
+## Install and use
 
-1. In SillyTavern, install a third-party extension from this repository URL.
-2. Open **Extensions → MultiTTS Narrator**.
-3. Enable Narrator.
-4. Keep the default endpoint `http://127.0.0.1:8774` unless your MultiTTS service uses another address.
-5. Run **Health test**. You should hear a short test sentence.
-6. Use **Narrate current**, then enable automatic narration when ready.
+1. In **Extensions → Install Extension**, install this GitHub repository (or choose the development branch to preview changes).
+2. Click the floating headphones icon to open the player. Drag the icon anywhere on the screen; its position is saved on this device.
+3. Open **设置**, enable narration, and verify the MultiTTS address (default: `http://127.0.0.1:8774`).
+4. Run **测试语音服务**, then choose **播放最新回复** or the button beside an assistant message. Automatic narration is optional.
 
-## What v2 alpha does
+Player, settings, and diagnostic log all live in the floating panel. The plugin does not add an extension settings drawer.
 
-- narrates completed assistant replies from SillyTavern canonical chat state;
-- deterministic paragraph/punctuation-aware segmentation;
-- bounded concurrent preload with strict in-order playback;
-- real pause/resume, stop, retry and skip;
-- one-latest-message auto queue while current narration is active;
-- cancels stale audio after edits/swipes/deletes/chat changes;
-- Media Session controls when supported;
-- privacy-safe recovery checkpoint and diagnostics;
-- direct `<audio>` loading from MultiTTS `/forward`, with `voice` omitted.
+## Playback and diagnostics
 
-The initial defaults (70 characters, 3 look-ahead / 3 simultaneous loads) are calibration defaults, not claimed device limits. Advanced settings allow testing up to 5 simultaneous loads.
+- Visible paragraphs and styled text from mixed HTML/preset responses are narratable; hidden HTML comments are excluded.
+- Newlines and punctuation guide sentence segmentation (20–1000 characters).
+- Bounded concurrent preload, in-order playback, pause/resume, skip, retry, message changes, and checkpoint recovery are supported.
+- The **日志** tab shows the last 30 events; **复制完整日志** exports up to 2000 locally persisted events including segment loading, readiness, playback start/stop, gap timings, buffering and media state.
+- Diagnostics do **not** include chat text or synthesis URLs, but do include timing metadata and your configured endpoint. Review before sharing. **清空日志** erases the local journal.
 
-## Important limits
+Android/Chrome can suspend or discard background pages. This browser extension cannot provide native Android foreground-service guarantees.
 
-Android/Chrome may freeze or discard a background page. This extension improves narration continuity but cannot provide Android foreground-service guarantees or keep LLM generation alive after the browser connection is killed.
-
-No full chat text is stored by Narrator. A non-loopback custom endpoint is explicitly warned because narration text will leave the local device/browser for that host.
-
-Developer notes: [Design](./docs/DESIGN.md) · [Testing](./docs/TESTING.md)
+Developer notes: [Design](./docs/DESIGN.md) · [Testing](./docs/TESTING.md). Run `npm test && npm run check`.
