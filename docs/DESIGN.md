@@ -38,7 +38,7 @@ Core rules:
 - `src/text.js` — pure normalization, hashing and segmentation.
 - `src/media.js` — URL construction, `AudioSlot`, Media Session integration.
 - `src/narrator.js` — single authoritative session/scheduler/controller.
-- `src/ui.js` — settings and compact controls; no direct media ownership.
+- `src/ui.js` — draggable launcher with integrated player/settings/logs; no direct media ownership.
 
 No runtime dependencies are required. Browser/platform APIs are used directly; tests use Node's built-in test runner.
 
@@ -52,9 +52,9 @@ The recovery checkpoint stores only chat/message identifiers, revision hash, seg
 
 ## Current UX
 
-- Chinese-only UI; optional speed/volume/pitch request parameters.
-- 20–1000 code-point semantic segmentation: newline first, then complete sentence, then late clause/whitespace fallback.
-- Prepared audio remains ordered and gap-minimized; previous/next transport does not replace the preload path.
-- Each assistant message keeps the right-side MultiTTS action and also gets the same cloned control immediately after `.name_text` when that standard name node exists.
-- Optional “skip code blocks” and “skip tagged blocks” mirror SillyTavern TTS preprocessing semantics before normalization/segmentation.
-- Rendered-text highlighting/click-to-seek remains deferred.
+- A movable floating icon opens one panel with playback, settings and persistent logs. The original extension settings drawer is removed.
+- Each assistant message retains a MultiTTS play action; the host remains the sole source of message text.
+- Hidden HTML comments are discarded; visible styled paragraphs remain speakable. Optional code/custom-tag skipping runs before punctuation-aware segmentation.
+- Each stage records safe timing metrics: segment load/ready, audio play request/start/end, stalls, buffer state, and end-to-next-start gap. The journal keeps up to 2000 recent events across reloads with batched storage writes.
+- No full chat text, /forward URL or waveform is persisted. Exported settings include the configured endpoint, which should be reviewed before sharing.
+- Highlighting and click-to-seek remain deferred.
