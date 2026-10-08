@@ -262,3 +262,23 @@ test('narration filters code and tagged blocks before segmentation', async () =>
     assert.equal(controller.session.source.text.includes('秘密标签内容'), false);
     assert.deepEqual(controller.session.segments.map(segment => segment.text), ['开头。', '结尾。']);
 });
+
+test('diagnostics include the real next-segment gap and buffer wait', async () => {
+    const { host, slots, controller } = makeController('甲甲甲甲甲甲甲甲甲甲甲。乙乙乙乙乙乙乙乙乙乙乙。');
+    await controller.narrateCandidate(host.candidate(), 'manual');
+    const first = byIndex(slots, 0);
+    const second = byIndex(slots, 1);
+    first.emit('ready');
+    second.emit('ready');
+    await Promise.resolve();
+    first.emit('waiting');
+    first.emit('playing');
+    first.emit('ended');
+    await Promise.resolve();
+    const nextStarted = controller.diagnostics.find(event => event.event === 'segment-playing' && event.index === 1);
+    assert.ok(nextStarted);
+    assert.ok(Number.isFinite(nextStarted.gapMs));
+    assert.ok(Number.isFinite(nextStarted.startDelayMs));
+    assert.ok(controller.diagnostics.some(event => event.event === 'media-waiting' && event.index === 0));
+    assert.ok(controller.diagnostics.some(event => event.event === 'segment-ready' && event.index === 1 && Number.isFinite(event.loadMs)));
+});
