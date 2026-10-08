@@ -181,6 +181,8 @@ export class NarratorUI {
         this.drag = null;
         if (!drag.moved) return;
         this.ignoreClick = true;
+        // A completed drag should suppress only the pointer's synthesized click.
+        setTimeout(() => { this.ignoreClick = false; }, 0);
         try { this.document.defaultView.localStorage.setItem(POSITION_KEY, JSON.stringify(this.getPosition())); } catch {}
         this.controller.record('ui-position-changed');
     }
@@ -255,14 +257,26 @@ export class NarratorUI {
                 this.setNotice(ok ? '语音服务可正常播放。' : '测试失败，请检查服务地址及浏览器权限。');
                 break;
             }
-            case 'copy-diagnostics':
+            case 'copy-diagnostics': {
+                const report = this.controller.getDiagnosticsReport();
+                let copied = false;
                 try {
-                    await this.document.defaultView.navigator.clipboard.writeText(this.controller.getDiagnosticsReport());
-                    this.setNotice('完整日志已复制，不包含聊天正文。');
+                    await this.document.defaultView.navigator.clipboard.writeText(report);
+                    copied = true;
                 } catch {
-                    this.setNotice('无法复制，请检查剪贴板权限或浏览器安全上下文。');
+                    // Android HTTP origins may not expose the secure-context Clipboard API.
+                    const field = this.document.createElement('textarea');
+                    field.value = report;
+                    field.setAttribute('readonly', '');
+                    field.style.cssText = 'position:fixed;left:-9999px;top:0';
+                    this.document.body.appendChild(field);
+                    field.select();
+                    try { copied = Boolean(this.document.execCommand?.('copy')); } catch {}
+                    field.remove();
                 }
+                this.setNotice(copied ? '完整日志已复制，不包含聊天正文。' : '浏览器禁止自动复制，请使用安全连接后重试。');
                 break;
+            }
             case 'clear-diagnostics':
                 this.controller.clearDiagnostics();
                 this.setNotice('诊断日志已清空。');
