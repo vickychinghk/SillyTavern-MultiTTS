@@ -195,6 +195,7 @@ export class NarratorController {
                 readyAt: null,
                 playRequestedAt: null,
                 playingAt: null,
+                playedMs: 0,
                 waitingAt: null,
                 stalledMs: 0,
                 lastProgressAt: null,
@@ -290,7 +291,13 @@ export class NarratorController {
             const at = this.now();
             if (type === 'progress' && segment.lastProgressAt !== null && at - segment.lastProgressAt < 2000) return;
             if (type === 'progress') segment.lastProgressAt = at;
-            if (['waiting', 'stalled'].includes(type) && segment.waitingAt === null) segment.waitingAt = at;
+            if (['waiting', 'stalled'].includes(type)) {
+                if (segment.playingAt !== null) {
+                    segment.playedMs += at - segment.playingAt;
+                    segment.playingAt = null;
+                }
+                if (segment.waitingAt === null) segment.waitingAt = at;
+            }
             this.record('media-' + type, { index, media: slot.getState?.() ?? null });
             if (['waiting', 'stalled'].includes(type) && index === session.currentIndex && this.status === 'playing') {
                 this.status = 'buffering';
@@ -307,7 +314,9 @@ export class NarratorController {
                 segment.waitingAt = null;
             }
             const gapMs = session.lastSegmentEndedAt === null ? null : at - session.lastSegmentEndedAt;
+            session.lastSegmentEndedAt = null; // Report the handoff once, not on subsequent rebuffer/resume.
             const startDelayMs = segment.playRequestedAt === null ? null : at - segment.playRequestedAt;
+            if (segment.playingAt !== null) segment.playedMs += at - segment.playingAt;
             segment.playingAt = at;
             segment.state = 'playing';
             session.playRequestIndex = null;
@@ -328,7 +337,7 @@ export class NarratorController {
             if (index !== session.currentIndex) return;
             const wasPaused = this.status === 'paused';
             const at = this.now();
-            const playbackMs = segment.playingAt === null ? null : at - segment.playingAt;
+            const playbackMs = segment.playedMs + (segment.playingAt === null ? 0 : at - segment.playingAt);
             const media = slot.getState?.() ?? null;
             session.lastSegmentEndedAt = at;
             segment.state = 'ended';
@@ -359,6 +368,7 @@ export class NarratorController {
         session.playRequestIndex = null;
         this.record('segment-error', {
             index: segment.index, attempt: segment.attempts, mediaCode: detail?.code ?? null,
+            playedMs: segment.playedMs, stalledMs: segment.stalledMs,
             elapsedMs: segment.loadStartedAt === null ? null : this.now() - segment.loadStartedAt,
         });
 
@@ -442,11 +452,15 @@ export class NarratorController {
         const segment = session.segments[session.currentIndex];
         if (!segment?.slot) return false;
         segment.slot.pause();
+        if (segment.playingAt !== null) {
+            segment.playedMs += this.now() - segment.playingAt;
+            segment.playingAt = null;
+        }
         session.currentTime = segment.slot.getCurrentTime();
         session.resumeTime = session.currentTime;
         this.status = 'paused';
         this.reason = null;
-        this.record('paused', { index: session.currentIndex, currentTime: Math.round(session.currentTime * 10) / 10 });
+        this.record('paused', { index: session.currentIndex, currentTime: Math.round(session.currentTime * 10) / 10, playedMs: segment.playedMs });
         this.writeCheckpoint();
         this.emit();
         return true;
@@ -466,12 +480,14 @@ export class NarratorController {
         if (!segment) return false;
 
         if (segment.state === 'playing' && segment.slot) {
+            segment.playRequestedAt = this.now();
             if (session.resumeTime > 0) segment.slot.seek(session.resumeTime);
             try {
                 await segment.slot.play();
                 this.status = 'playing';
                 this.reason = null;
                 session.resumeTime = 0;
+                if (segment.playingAt === null) segment.playingAt = this.now();
                 this.writeCheckpoint();
                 this.emit();
                 return true;
