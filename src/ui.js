@@ -420,7 +420,12 @@ export class NarratorUI {
 
         if (this.view === 'logs' && !this.panel.hidden) {
             const events = this.controller.diagnosticsStore?.read() ?? this.controller.diagnostics;
-            this.root.querySelector('[data-role="log-count"]').textContent = '已保存 ' + events.length + ' 条事件 · 下方显示最近 30 条';
+            const gaps = events.filter(item => item.event === 'segment-playing' && Number.isFinite(item.gapMs)).map(item => item.gapMs);
+            const avg = gaps.length ? Math.round(gaps.reduce((sum, ms) => sum + ms, 0) / gaps.length) : null;
+            const max = gaps.length ? Math.max(...gaps) : null;
+            this.root.querySelector('[data-role="log-count"]').textContent = '已保存 ' + events.length + ' 条事件'
+                + (avg === null ? '' : ' · 段间平均 ' + avg + 'ms / 最长 ' + max + 'ms')
+                + ' · 最近 30 条如下';
             this.root.querySelector('[data-role="log-preview"]').textContent = events.slice(-30).map(entry => {
                 const fields = Object.entries(entry).filter(([key]) => key !== 'at' && key !== 'event');
                 const info = fields.map(([key, value]) => key + '=' + (typeof value === 'object' ? JSON.stringify(value) : value)).join(' ');
