@@ -91,7 +91,13 @@ export class NarratorController {
     async sourceFromCandidate(candidate) {
         if (!candidate?.text || candidate.chatId === undefined || candidate.index === undefined) return null;
         const text = prepareNarrationText(candidate.text, this.settingsStore.get());
-        if (!text) return null;
+        if (!text) {
+            this.record('source-empty-after-filter', {
+                messageIndex: Number(candidate.index),
+                originalChars: Array.from(candidate.text).length,
+            });
+            return null;
+        }
         const revisionHash = await sha256Hex(JSON.stringify({
             chatId: String(candidate.chatId),
             index: Number(candidate.index),
@@ -142,7 +148,14 @@ export class NarratorController {
 
     async narrateCandidate(candidate, sourceMode = 'manual') {
         const source = await this.sourceFromCandidate(candidate);
-        if (!source) return false;
+        if (!source) {
+            if (sourceMode === 'manual') {
+                this.status = 'action-required';
+                this.reason = 'empty-text';
+                this.emit();
+            }
+            return false;
+        }
 
         if (sourceMode === 'auto') {
             if (this.session?.source.key === source.key || this.pendingAuto?.key === source.key || this.lastCompletedKey === source.key) return false;
