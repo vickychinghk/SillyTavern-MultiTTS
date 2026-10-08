@@ -4,13 +4,16 @@ const WEAK_BREAK = /[，,、]/u;
 const CLOSER = /["'”’」』）》】〉]/u;
 const FALLBACK_RATIO = 0.6;
 
+// The host message may contain visible HTML alongside hidden prompt/preset comments.
+// Remove non-spoken markup before segmentation, preserving text inside presentation tags.
 export function filterNarrationText(input, { skipCodeBlocks = false, skipTagBlocks = false } = {}) {
-    let text = String(input ?? '');
+    let text = String(input ?? '').replace(/<!--[\\s\\S]*?-->/g, '');
     if (skipCodeBlocks) {
-        text = text.replace(/```.*?```/gs, '').replace(/~~~.*?~~~/gs, '');
+        text = text.replace(/```[\\s\\S]*?```/g, '').replace(/~~~[\s\S]*?~~~/g, '');
     }
     if (skipTagBlocks) {
-        text = text.replace(/<.*?>[\s\S]*?<\/.*?>/g, '');
+        // Skip semantic/custom blocks but retain visible HTML paragraphs and formatting.
+        text = text.replace(/<(?!\/?(?:p|span|div|br|b|strong|em|i|u|blockquote|li|ul|ol|h[1-6])\b)([a-z][\w:-]*)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
     }
     return text.trim();
 }
@@ -18,8 +21,13 @@ export function filterNarrationText(input, { skipCodeBlocks = false, skipTagBloc
 export function normalizeNarrationText(input) {
     return String(input ?? '')
         .replace(/\r\n?/g, '\n')
+        .replace(/<!--[\s\S]*?-->/g, '')
         .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
         .replace(/<img\b[^>]*>/gi, '')
+        .replace(/<br\s*\/?\s*>/gi, '\n')
+        .replace(/<\/(?:p|div|li|blockquote|h[1-6])\s*>/gi, '\n')
+        .replace(/<\/?[a-z][^>]*>/gi, '')
+        .replace(/&nbsp;/gi, ' ')
         .replace(/[ \t]+/g, ' ')
         .replace(/ *\n */g, '\n')
         .trim();
