@@ -101,6 +101,48 @@ export class SettingsStore {
     }
 }
 
+
+export const DIAGNOSTICS_KEY = 'st-multitts-narrator:diagnostics:v1';
+const MAX_DIAGNOSTIC_EVENTS = 2000;
+
+// Bounded, durable, text-free event journal. Storage failure never blocks playback.
+export class DiagnosticsStore {
+    constructor(storage = globalThis.localStorage) {
+        this.storage = storage;
+        try {
+            const saved = JSON.parse(storage?.getItem(DIAGNOSTICS_KEY) || '[]');
+            this.events = Array.isArray(saved) ? saved.slice(-MAX_DIAGNOSTIC_EVENTS) : [];
+        } catch {
+            this.events = [];
+        }
+    }
+
+    append(entry) {
+        this.events.push(entry);
+        if (this.events.length > MAX_DIAGNOSTIC_EVENTS) this.events.shift();
+        this.persist();
+    }
+
+    read() {
+        return this.events.slice();
+    }
+
+    clear() {
+        this.events = [];
+        try { this.storage?.removeItem(DIAGNOSTICS_KEY); } catch {}
+    }
+
+    persist() {
+        try {
+            this.storage?.setItem(DIAGNOSTICS_KEY, JSON.stringify(this.events));
+        } catch {
+            // Under quota pressure retain the newest half, without throwing.
+            this.events = this.events.slice(-Math.floor(MAX_DIAGNOSTIC_EVENTS / 2));
+            try { this.storage?.setItem(DIAGNOSTICS_KEY, JSON.stringify(this.events)); } catch {}
+        }
+    }
+}
+
 export class CheckpointStore {
     constructor(storage = globalThis.localStorage) {
         this.storage = storage;
