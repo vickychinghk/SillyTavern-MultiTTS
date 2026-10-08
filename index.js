@@ -1,5 +1,5 @@
 import { SillyTavernHost } from './src/host.js';
-import { SettingsStore, CheckpointStore } from './src/settings.js';
+import { SettingsStore, CheckpointStore, DiagnosticsStore } from './src/settings.js';
 import { createAudioSlotFactory, installMediaSession } from './src/media.js';
 import { NarratorController } from './src/narrator.js';
 import { NarratorUI } from './src/ui.js';
@@ -17,6 +17,7 @@ export async function init() {
         host,
         settingsStore,
         checkpointStore: new CheckpointStore(),
+        diagnosticsStore: new DiagnosticsStore(),
         mediaFactory: createAudioSlotFactory(),
     });
     const ui = new NarratorUI({ host, settingsStore, controller });
