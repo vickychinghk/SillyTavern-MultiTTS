@@ -77,3 +77,19 @@ test('sha256 is stable', async () => {
     assert.equal(await sha256Hex('abc'), await sha256Hex('abc'));
     assert.notEqual(await sha256Hex('abc'), await sha256Hex('abcd'));
 });
+
+test('decorated assistant replies preserve visible paragraphs and ignore hidden comments', () => {
+    const input = '<!-- hidden preset -->正文第一段。<!-- note -->\n<p style="color: #abc">【角色】可朗读的对话。</p>\n普通正文。<!-- end -->';
+    const prepared = prepareNarrationText(input);
+    assert.equal(prepared.includes('hidden'), false);
+    assert.equal(prepared.includes('style='), false);
+    assert.equal(prepared.includes('<!--'), false);
+    assert.deepEqual(segmentNarrationText(prepared, 1000), [
+        '正文第一段。', '【角色】可朗读的对话。', '普通正文。',
+    ]);
+});
+
+test('skipping custom tag blocks does not delete visible HTML paragraph content', () => {
+    const input = '<think>hidden reasoning</think><p style="color: red">展示的文本。</p>';
+    assert.equal(prepareNarrationText(input, { skipTagBlocks: true }), '展示的文本。');
+});
