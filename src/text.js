@@ -7,9 +7,9 @@ const FALLBACK_RATIO = 0.6;
 // The host message may contain visible HTML alongside hidden prompt/preset comments.
 // Remove non-spoken markup before segmentation, preserving text inside presentation tags.
 export function filterNarrationText(input, { skipCodeBlocks = false, skipTagBlocks = false } = {}) {
-    let text = String(input ?? '').replace(/<!--[\\s\\S]*?-->/g, '');
+    let text = String(input ?? '').replace(/<!--[\s\S]*?-->/g, '');
     if (skipCodeBlocks) {
-        text = text.replace(/```[\\s\\S]*?```/g, '').replace(/~~~[\s\S]*?~~~/g, '');
+        text = text.replace(/```[\s\S]*?```/g, '').replace(/~~~[\s\S]*?~~~/g, '');
     }
     if (skipTagBlocks) {
         // Skip semantic/custom blocks but retain visible HTML paragraphs and formatting.
