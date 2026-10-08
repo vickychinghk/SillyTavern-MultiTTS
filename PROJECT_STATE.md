@@ -1,8 +1,8 @@
 # Project State
 
-**Line:** 2.0.0-alpha.3  
-**Status:** Installable alpha
+**Line:** 2.0.0-alpha.4
+**Status:** Installable alpha; mobile playback acceptance pending
 
-Alpha.3 keeps the validated preload/playback path, adds optional SillyTavern-style code/tag filtering, and adds a second per-message MultiTTS control immediately after the username while retaining the existing right-side action.
+Alpha.4 consolidates player, settings and durable diagnostics into a draggable floating panel, measures cross-segment playback gaps and buffering, and excludes hidden HTML comments from narration while preserving visible styled paragraphs.
 
-Rendered-text highlighting and click-to-seek remain intentionally deferred.
+No runtime dependencies were added. Android in-app verification remains required before a stable release.
