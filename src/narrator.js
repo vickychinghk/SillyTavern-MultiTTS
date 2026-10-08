@@ -86,7 +86,6 @@ export class NarratorController {
     clearDiagnostics() {
         this.diagnostics = [];
         this.diagnosticsStore?.clear();
-        this.record('diagnostics-cleared');
     }
 
     async sourceFromCandidate(candidate) {
