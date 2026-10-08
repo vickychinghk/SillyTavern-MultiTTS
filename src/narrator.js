@@ -843,6 +843,7 @@ export class NarratorController {
         await this.stop({ clearPending: true, silent: true });
         this.disposed = true;
         this.settingsUnsubscribe?.();
+        this.diagnosticsStore?.dispose();
         this.listeners.clear();
     }
 }
