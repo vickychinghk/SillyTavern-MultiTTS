@@ -2,7 +2,9 @@ const SENTENCE_END = /[。！？!?…]/u;
 const CLAUSE_BREAK = /[；;：:]/u;
 const WEAK_BREAK = /[，,、]/u;
 const CLOSER = /["'”’」』）》】〉]/u;
-const FALLBACK_RATIO = 0.6;
+const MIN_PUNCTUATION_RATIO = 0.35;
+const wordSegmenter = typeof Intl?.Segmenter === 'function'
+    ? new Intl.Segmenter('zh', { granularity: 'word' }) : null;
 
 // The host message may contain visible HTML alongside hidden prompt/preset comments.
 // Remove non-spoken markup before segmentation, preserving text inside presentation tags.
@@ -54,42 +56,53 @@ function findBreak(chars, start, end, matcher, min = start) {
     return -1;
 }
 
+// Prefer complete punctuation clauses and Unicode word boundaries to hard cuts.
+function findWordBoundary(chars, start, end, maxChars) {
+    if (!wordSegmenter) return -1;
+    const text = chars.slice(start).join('');
+    const boundaries = Array.from(wordSegmenter.segment(text), part =>
+        start + Array.from(text.slice(0, part.index + part.segment.length)).length);
+    const min = start + Math.max(1, Math.floor(maxChars * 0.45));
+    const before = boundaries.filter(pos => pos <= end && pos >= min);
+    if (before.length) return before.at(-1);
+    const overflow = Math.min(12, Math.max(3, Math.floor(maxChars * 0.2)));
+    return boundaries.find(pos => pos > end && pos <= end + overflow) ?? -1;
+}
+
 function splitLine(line, maxChars) {
     const chars = codePoints(line.trim());
     if (!chars.length) return [];
     const segments = [];
     let start = 0;
-
     while (start < chars.length) {
-        const remaining = chars.length - start;
-        if (remaining <= maxChars) {
+        if (chars.length - start <= maxChars) {
             segments.push(chars.slice(start).join('').trim());
             break;
         }
-
         const end = start + maxChars;
         let cut = findBreak(chars, start, end, SENTENCE_END);
         if (cut < 0) {
-            const minFallback = start + Math.floor(maxChars * FALLBACK_RATIO);
-            cut = findBreak(chars, start, end, CLAUSE_BREAK, minFallback);
-            if (cut < 0) cut = findBreak(chars, start, end, WEAK_BREAK, minFallback);
+            const minimum = start + Math.floor(maxChars * MIN_PUNCTUATION_RATIO);
+            cut = findBreak(chars, start, end, CLAUSE_BREAK, minimum);
+            if (cut < 0) cut = findBreak(chars, start, end, WEAK_BREAK, minimum);
             if (cut < 0) {
-                for (let i = end - 1; i >= minFallback; i--) {
-                    if (/\s/u.test(chars[i])) {
-                        cut = i + 1;
-                        break;
-                    }
+                for (let i = end - 1; i >= minimum; i--) {
+                    if (/\\s/u.test(chars[i])) { cut = i + 1; break; }
                 }
+            }
+            if (cut < 0) cut = findWordBoundary(chars, start, end, maxChars);
+            if (cut < 0) {
+                // An early punctuation break is safer than cutting a Chinese word.
+                cut = findBreak(chars, start, end, CLAUSE_BREAK);
+                if (cut < 0) cut = findBreak(chars, start, end, WEAK_BREAK);
             }
         }
         if (cut <= start) cut = end;
-
         const segment = chars.slice(start, cut).join('').trim();
         if (segment) segments.push(segment);
         start = cut;
-        while (start < chars.length && /\s/u.test(chars[start])) start++;
+        while (start < chars.length && /\\s/u.test(chars[start])) start++;
     }
-
     return segments;
 }
 
