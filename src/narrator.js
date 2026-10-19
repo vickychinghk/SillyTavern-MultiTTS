@@ -5,6 +5,9 @@ import { normalizeEndpoint, updateMediaSessionState } from './media.js';
 const CHECKPOINT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const CIRCUIT_WINDOW_MS = 30_000;
 const HEALTH_TIMEOUT_MS = 20_000;
+const NAVIGATION_BURST_MS = 2_000;
+const SINGLE_NAVIGATION_MS = 300;
+const CACHE_LIMIT = 12;
 
 function makeId() {
     return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -32,6 +35,10 @@ export class NarratorController {
         this.diagnostics = diagnosticsStore?.read() ?? [];
         this.healthBusy = false;
         this.disposed = false;
+        this.navigationTimer = null;
+        this.lastNavigationAt = -Infinity;
+        this.navigationCount = 0;
+        this.cacheTick = 0;
         this.settingsUnsubscribe = this.settingsStore.subscribe(settings => {
             if (!settings.enabled && this.session) this.stop();
             this.emit();
@@ -226,6 +233,8 @@ export class NarratorController {
                 waitingAt: null,
                 stalledMs: 0,
                 lastProgressAt: null,
+                timeoutId: null,
+                lastUsed: 0,
             })),
             currentIndex,
             currentTime: Number(restore?.currentTime) || 0,
@@ -259,15 +268,60 @@ export class NarratorController {
         return true;
     }
 
+    // At most one request at a time. The selected segment always loads first.
     fillWindow() {
         const session = this.session;
-        if (!session || this.disposed || session.breakerOpen || this.status === 'action-required') return;
-        const inFlight = () => session.segments.filter(segment => segment.state === 'loading').length;
-        const windowEnd = Math.min(session.segments.length, session.currentIndex + 1 + session.settings.lookAhead);
+        if (!session || this.disposed || this.navigationTimer !== null ||
+            session.breakerOpen || this.status === 'action-required') return;
+        if (session.segments.some(item => item.state === 'loading')) return;
+        const current = session.segments[session.currentIndex];
+        if (!current) return;
+        if (current.state === 'queued') {
+            this.loadSegment(session, current);
+            return;
+        }
+        if (!['ready', 'playing', 'ended'].includes(current.state)) return;
+        const end = Math.min(session.segments.length, session.currentIndex + 1 + session.settings.lookAhead);
+        for (let index = session.currentIndex + 1; index < end; index++) {
+            if (session.segments[index].state === 'queued') {
+                this.loadSegment(session, session.segments[index]);
+                return;
+            }
+        }
+    }
 
-        for (let index = session.currentIndex; index < windowEnd && inFlight() < session.settings.maxInFlight; index++) {
-            const segment = session.segments[index];
-            if (segment.state === 'queued') this.loadSegment(session, segment);
+    clearLoadTimeout(segment) {
+        if (segment.timeoutId != null) clearTimeout(segment.timeoutId);
+        segment.timeoutId = null;
+    }
+
+    cancelLoading(segment, reason = 'navigation') {
+        if (segment.state !== 'loading') return;
+        this.clearLoadTimeout(segment);
+        segment.slot?.dispose();
+        segment.slot = null;
+        segment.state = 'queued';
+        segment.loadStartedAt = null;
+        segment.readyAt = null;
+        segment.attempts = 0;
+        this.record('segment-load-canceled', { index: segment.index, reason });
+    }
+
+    touchCache(session, segment) {
+        segment.lastUsed = ++this.cacheTick;
+        const cached = session.segments.filter(item => item.slot && item.state !== 'loading'
+            && item.index !== session.currentIndex && item.state !== 'playing')
+            .sort((a, b) => a.lastUsed - b.lastUsed);
+        let total = cached.length + (session.segments[session.currentIndex]?.slot ? 1 : 0);
+        while (total > CACHE_LIMIT && cached.length) {
+            const item = cached.shift();
+            item.slot.dispose();
+            item.slot = null;
+            item.state = 'queued';
+            item.readyAt = null;
+            item.attempts = 0;
+            total--;
+            this.record('segment-cache-evicted', { index: item.index });
         }
     }
 
@@ -276,6 +330,8 @@ export class NarratorController {
         segment.attempts += 1;
         segment.state = 'loading';
         segment.loadStartedAt = this.now();
+        segment.waitingAt = null;
+        segment.stalledMs = 0;
         const sessionId = session.id;
         const generation = session.generation;
         const slot = this.mediaFactory({
@@ -288,6 +344,13 @@ export class NarratorController {
         this.record('segment-load', { index: segment.index, attempt: segment.attempts, length: segment.length, readyState: slot.getState?.().readyState ?? null });
         try {
             slot.load();
+            const timeoutMs = (session.settings.loadTimeoutSec || 60) * 1000;
+            segment.timeoutId = setTimeout(() => {
+                if (this.session !== session || segment.slot !== slot || segment.state !== 'loading') return;
+                this.record('segment-load-timeout', { index: segment.index, timeoutMs, attempt: segment.attempts });
+                this.handleSegmentError(session, segment, { code: 'timeout' });
+            }, timeoutMs);
+            segment.timeoutId?.unref?.();
         } catch {
             this.onSlotEvent(sessionId, generation, segment.index, 'error', slot, { code: null });
         }
@@ -301,6 +364,7 @@ export class NarratorController {
 
         if (type === 'ready') {
             if (segment.state !== 'loading') return;
+            this.clearLoadTimeout(segment);
             segment.state = 'ready';
             segment.readyAt = this.now();
             this.record('segment-ready', {
@@ -309,8 +373,9 @@ export class NarratorController {
                 loadMs: segment.loadStartedAt == null ? null : segment.readyAt - segment.loadStartedAt,
                 media: slot.getState?.() ?? null,
             });
-            this.fillWindow();
             this.tryPlay();
+            this.touchCache(session, segment);
+            this.fillWindow();
             return;
         }
 
@@ -368,8 +433,8 @@ export class NarratorController {
             const media = slot.getState?.() ?? null;
             session.lastSegmentEndedAt = at;
             segment.state = 'ended';
-            segment.slot?.dispose();
-            segment.slot = null;
+            segment.slot?.seek(0);
+            this.touchCache(session, segment);
             session.playRequestIndex = null;
             session.currentIndex += 1;
             session.currentTime = 0;
@@ -390,6 +455,7 @@ export class NarratorController {
     }
 
     handleSegmentError(session, segment, detail) {
+        this.clearLoadTimeout(segment);
         segment.slot?.dispose();
         segment.slot = null;
         session.playRequestIndex = null;
