@@ -371,6 +371,14 @@ export class NarratorController {
         const segment = session.segments[index];
         if (!segment || segment.slot !== slot) return;
 
+        if (type === 'transport') {
+            this.record('segment-transport', {
+                index, mode: detail?.mode ?? null, reason: detail?.reason ?? null,
+                bytes: detail?.bytes ?? null,
+            });
+            return;
+        }
+
         if (type === 'ready') {
             if (segment.state !== 'loading') return;
             this.clearLoadTimeout(segment);
