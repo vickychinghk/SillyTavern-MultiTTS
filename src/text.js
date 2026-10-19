@@ -65,8 +65,7 @@ function findWordBoundary(chars, start, end, maxChars) {
     const min = start + Math.max(1, Math.floor(maxChars * 0.45));
     const before = boundaries.filter(pos => pos <= end && pos >= min);
     if (before.length) return before.at(-1);
-    const overflow = Math.min(12, Math.max(3, Math.floor(maxChars * 0.2)));
-    return boundaries.find(pos => pos > end && pos <= end + overflow) ?? -1;
+    return -1; // Character setting is a hard upper bound for TTS.
 }
 
 function splitLine(line, maxChars) {
