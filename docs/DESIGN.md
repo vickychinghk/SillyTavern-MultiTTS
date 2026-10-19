@@ -46,7 +46,7 @@ No runtime dependencies are required. Browser/platform APIs are used directly; t
 
 Each segment is `queued → loading → ready → playing → ended`, with `error`, `skipped`, or `canceled` terminal alternatives. Readiness can complete out of order; playback cannot.
 
-The scheduler requests the selected segment before any speculative work; future requests are serialized, and a 2-second burst-navigation quiet period coalesces rapid skips. Ready audio is retained in a bounded session cache. Browser audio readiness does not by itself prove that the server has completely finished its synthesis job. Alpha keeps one active narration plus at most one latest pending automatic message. Manual narration has explicit priority. A segment gets at most one automatic retry; exhausted failures require Retry / Skip / Stop.
+The scheduler requests the selected segment before any speculative work; future requests are serialized, and a 2-second burst-navigation quiet period coalesces rapid skips. Ready audio is retained in a bounded session cache. The primary transport fetches the complete audio response into a Blob before starting a new TTS request. A logged stream fallback is retained only for endpoints that cannot be fetched due to browser/CORS restrictions; HTML audio readiness alone cannot prove the server finished synthesizing. Alpha keeps one active narration plus at most one latest pending automatic message. Manual narration has explicit priority. A segment gets at most one automatic retry; exhausted failures require Retry / Skip / Stop.
 
 The recovery checkpoint stores only chat/message identifiers, revision hash, segment index/time, settings hash, status and timestamp. Restore reconstructs text from SillyTavern and waits for an explicit Resume action.
 
