@@ -84,6 +84,7 @@ const PANEL_HTML = [
     '  <div class="mtn-page" data-page="logs" hidden>',
     '    <p class="mtn-hint">日志仅保存时序和长度信息，不保存聊天正文。复制最新回复将从当前聊天读取与朗读相同的过滤后纯文本，保留段落换行。</p>',
     '    <div class="mtn-row"><button type="button" class="mtn-secondary" data-action="copy-reply">复制最新回复纯文本</button></div>',
+    '    <div class="mtn-row"><button type="button" class="mtn-secondary" data-action="copy-segments">复制当前会话分段文本</button></div>',
     '    <div class="mtn-row"><button type="button" class="mtn-secondary" data-action="copy-diagnostics">复制完整日志</button><button type="button" class="mtn-secondary mtn-danger" data-action="clear-diagnostics">清空日志</button></div>',
     '    <div data-role="log-count" class="mtn-hint"></div>',
     '    <pre class="mtn-log-preview" data-role="log-preview"></pre>',
@@ -314,6 +315,16 @@ export class NarratorUI {
                 this.setNotice(copied
                     ? '最新回复朗读纯文本已复制（' + Array.from(text).length + ' 字）。'
                     : '浏览器禁止自动复制，请检查剪贴板权限。');
+                break;
+            }
+            case 'copy-segments': {
+                const text = this.controller.getActiveSegmentText();
+                if (!text) {
+                    this.setNotice('当前没有正在朗读的会话。');
+                    break;
+                }
+                const copied = await this.copyText(text);
+                this.setNotice(copied ? '当前会话的最终分段文本已复制。' : '浏览器禁止自动复制，请检查剪贴板权限。');
                 break;
             }
             case 'copy-diagnostics': {
