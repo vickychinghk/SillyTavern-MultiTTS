@@ -90,7 +90,15 @@ export class NarratorController {
 
     async sourceFromCandidate(candidate) {
         if (!candidate?.text || candidate.chatId === undefined || candidate.index === undefined) return null;
-        const text = prepareNarrationText(candidate.text, this.settingsStore.get());
+        const settings = this.settingsStore.get();
+        const text = prepareNarrationText(candidate.text, settings);
+        this.record('source-prepared', {
+            messageIndex: Number(candidate.index),
+            inputChars: Array.from(candidate.text).length,
+            preparedChars: Array.from(text).length,
+            skipCodeBlocks: settings.skipCodeBlocks,
+            skipTagBlocks: settings.skipTagBlocks,
+        });
         if (!text) {
             this.record('source-empty-after-filter', {
                 messageIndex: Number(candidate.index),
@@ -120,6 +128,13 @@ export class NarratorController {
         const settings = this.settingsStore.get();
         if (!settings.enabled || !settings.autoNarrate || !candidate) return false;
         return this.narrateCandidate(candidate, 'auto');
+    }
+
+    // Returns exactly the text handed to the segmenter, sourced from the public chat API.
+    // The caller may copy it; it must never be persisted in diagnostics.
+    getLatestReplyText() {
+        const candidate = this.host.getLatestAssistantMessage();
+        return candidate ? prepareNarrationText(candidate.text, this.settingsStore.get()) : null;
     }
 
     async narrateLatestManual() {

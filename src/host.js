@@ -15,7 +15,7 @@ export class SillyTavernHost {
 
     assertAvailable() {
         const context = this.getContext();
-        if (!context.eventSource || !context.eventTypes || !Array.isArray(context.chat)) {
+        if (!context.eventSource || !(context.eventTypes || context.event_types) || !Array.isArray(context.chat)) {
             throw new Error('Required SillyTavern event/chat APIs are unavailable.');
         }
         return true;
@@ -73,7 +73,9 @@ export class SillyTavernHost {
 
     subscribe({ onAssistantFinalized, onMutation, onChatChanged, onMessageRendered, onMessagesLoaded }) {
         this.disposeSubscriptions();
-        const { eventSource, eventTypes } = this.getContext();
+        const context = this.getContext();
+        const { eventSource } = context;
+        const eventTypes = context.eventTypes || context.event_types;
         const on = (event, handler) => {
             if (!event) return;
             eventSource.on(event, handler);

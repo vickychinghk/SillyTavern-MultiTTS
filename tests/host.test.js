@@ -84,3 +84,16 @@ test('message render events are exposed for host-native message controls', () =>
     assert.deepEqual(rendered, [3]);
     assert.equal(loaded, 1);
 });
+
+test('public event_types spelling is also accepted', async () => {
+    const { context, eventSource, host } = setup();
+    context.event_types = context.eventTypes;
+    delete context.eventTypes;
+    assert.equal(host.assertAvailable(), true);
+    const seen = [];
+    host.subscribe({ onAssistantFinalized: candidate => seen.push(candidate?.text) });
+    context.chat.push({ name: 'A', is_user: false, is_system: false, mes: 'compat message' });
+    eventSource.emit(context.event_types.MESSAGE_RECEIVED, 1);
+    await Promise.resolve();
+    assert.deepEqual(seen, ['compat message']);
+});

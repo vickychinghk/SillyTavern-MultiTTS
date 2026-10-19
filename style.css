@@ -220,3 +220,36 @@
     #multitts-narrator-controls .mtn-panel { animation: mtn-enter .13s ease-out; }
     @keyframes mtn-enter { from { opacity: .75; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 }
+
+/* SVG controls: no reliance on the host's icon font or pseudo-element glyphs. */
+#multitts-narrator-controls button[data-icon] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+#multitts-narrator-controls .mtn-svg,
+.mtn-message-play .mtn-svg {
+    display: block;
+    width: 21px;
+    height: 21px;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: currentColor;
+}
+.mtn-message-play.mes_button {
+    display: inline-flex;
+    vertical-align: middle;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 2px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+.mtn-message-play .mtn-svg { width: 17px; height: 17px; }
+.mtn-message-play:hover { background: #9099ae24; }
+.mtn-message-play:focus-visible { outline: 2px solid var(--SmartThemeQuoteColor, #81b9ef); }

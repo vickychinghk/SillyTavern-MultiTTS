@@ -23,19 +23,34 @@ const POSITION_KEY = 'st-multitts-narrator:position:v1';
 const MARGIN = 12;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
+// Self-contained stroke icons avoid Font Awesome font/glyph conflicts on mobile themes.
+const ICON_PATHS = Object.freeze({
+    headphones: '<path d="M3 14v-3a9 9 0 0 1 18 0v3"/><path d="M3 14h3v7H5a2 2 0 0 1-2-2v-5Zm18 0h-3v7h1a2 2 0 0 0 2-2v-5Z"/>',
+    close: '<path d="M18 6 6 18M6 6l12 12"/>',
+    previous: '<path d="M19 20 9 12l10-8v16ZM5 19V5"/>',
+    next: '<path d="m5 4 10 8-10 8V4ZM19 5v14"/>',
+    stop: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
+    play: '<path d="m7 4 13 8-13 8V4Z"/>',
+    pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
+    speaker: '<path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/>',
+});
+function iconSvg(name) {
+    return '<svg class="mtn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + (ICON_PATHS[name] ?? '') + '</svg>';
+}
+
 const PANEL_HTML = [
-    '<button type="button" class="mtn-launcher fa-solid fa-headphones" data-action="open" aria-label="打开 MultiTTS" aria-expanded="false" title="MultiTTS · 拖动调整位置"></button>',
+    '<button type="button" class="mtn-launcher" data-icon="headphones" data-action="open" aria-label="打开 MultiTTS" aria-expanded="false" title="MultiTTS · 拖动调整位置"></button>',
     '<section class="mtn-panel" data-role="panel" aria-label="MultiTTS 播放器" hidden>',
-    '  <header class="mtn-header"><div><strong>MultiTTS</strong><small>旁白播放器</small></div><button type="button" data-action="close" aria-label="关闭面板" class="mtn-icon fa-solid fa-xmark"></button></header>',
+    '  <header class="mtn-header"><div><strong>MultiTTS</strong><small>旁白播放器</small></div><button type="button" data-action="close" aria-label="关闭面板" class="mtn-icon" data-icon="close"></button></header>',
     '  <nav class="mtn-tabs" aria-label="播放器页面"><button type="button" data-tab="player" aria-current="page">播放</button><button type="button" data-tab="settings">设置</button><button type="button" data-tab="logs">日志</button></nav>',
     '  <div class="mtn-page" data-page="player">',
     '    <div class="mtn-now"><span data-role="status">空闲</span><span data-role="progress"></span></div>',
     '    <progress data-role="segment-progress" value="0" max="1" aria-label="分段进度"></progress>',
     '    <div class="mtn-transport">',
-    '      <button type="button" data-action="previous" class="mtn-icon fa-solid fa-backward-step" title="上一段" aria-label="上一段"></button>',
-    '      <button type="button" data-action="toggle" class="mtn-play fa-solid fa-play" title="播放 / 暂停" aria-label="播放 / 暂停"></button>',
-    '      <button type="button" data-action="stop" class="mtn-icon fa-solid fa-stop" title="停止" aria-label="停止"></button>',
-    '      <button type="button" data-action="next" class="mtn-icon fa-solid fa-forward-step" title="下一段" aria-label="下一段"></button>',
+    '      <button type="button" data-action="previous" class="mtn-icon" data-icon="previous" title="上一段" aria-label="上一段"></button>',
+    '      <button type="button" data-action="toggle" class="mtn-play" data-icon="play" title="播放 / 暂停" aria-label="播放 / 暂停"></button>',
+    '      <button type="button" data-action="stop" class="mtn-icon" data-icon="stop" title="停止" aria-label="停止"></button>',
+    '      <button type="button" data-action="next" class="mtn-icon" data-icon="next" title="下一段" aria-label="下一段"></button>',
     '    </div>',
     '    <div class="mtn-row"><button type="button" data-action="narrate" class="mtn-secondary">播放最新回复</button><button type="button" data-action="retry" class="mtn-secondary" hidden>重试当前段</button></div>',
     '    <p class="mtn-hint">点击消息旁的朗读按钮，也可以从任意回复开始。</p>',
@@ -67,7 +82,8 @@ const PANEL_HTML = [
     '    </div>',
     '  </div>',
     '  <div class="mtn-page" data-page="logs" hidden>',
-    '    <p class="mtn-hint">自动记录并保留最近 2000 条事件；刷新后可查看。记录耗时、间隔和缓冲状态，不保存聊天正文。</p>',
+    '    <p class="mtn-hint">日志仅保存时序和长度信息，不保存聊天正文。复制最新回复将从当前聊天读取与朗读相同的过滤后纯文本，保留段落换行。</p>',
+    '    <div class="mtn-row"><button type="button" class="mtn-secondary" data-action="copy-reply">复制最新回复纯文本</button></div>',
     '    <div class="mtn-row"><button type="button" class="mtn-secondary" data-action="copy-diagnostics">复制完整日志</button><button type="button" class="mtn-secondary mtn-danger" data-action="clear-diagnostics">清空日志</button></div>',
     '    <div data-role="log-count" class="mtn-hint"></div>',
     '    <pre class="mtn-log-preview" data-role="log-preview"></pre>',
@@ -116,6 +132,7 @@ export class NarratorUI {
         this.root = this.document.createElement('div');
         this.root.id = 'multitts-narrator-controls';
         this.root.innerHTML = PANEL_HTML;
+        this.renderIcons();
         this.document.body.appendChild(this.root);
         this.panel = this.root.querySelector('[data-role="panel"]');
         this.launcher = this.root.querySelector('[data-action="open"]');
@@ -147,6 +164,35 @@ export class NarratorUI {
         this.unsubscribers.push(this.controller.subscribe(snapshot => this.render(snapshot)));
         this.unsubscribers.push(this.settingsStore.subscribe(() => this.render(this.controller.getSnapshot())));
         this.render(this.controller.getSnapshot());
+    }
+
+    renderIcons() {
+        for (const button of this.root.querySelectorAll('button[data-icon]')) {
+            const name = button.dataset.icon;
+            if (button.dataset.renderedIcon !== name) {
+                button.innerHTML = iconSvg(name);
+                button.dataset.renderedIcon = name;
+            }
+        }
+    }
+
+    async copyText(text) {
+        try {
+            await this.document.defaultView.navigator.clipboard.writeText(text);
+            return true;
+        } catch {
+            // Fallback for Android or insecure HTTP origins without Clipboard API.
+            const field = this.document.createElement('textarea');
+            field.value = text;
+            field.setAttribute('readonly', '');
+            field.style.cssText = 'position:fixed;left:-9999px;top:0';
+            this.document.body.appendChild(field);
+            field.select();
+            let copied = false;
+            try { copied = Boolean(this.document.execCommand?.('copy')); } catch {}
+            field.remove();
+            return copied;
+        }
     }
 
     getPosition() {
@@ -258,24 +304,21 @@ export class NarratorUI {
                 this.setNotice(ok ? '语音服务可正常播放。' : '测试失败，请检查服务地址及浏览器权限。');
                 break;
             }
-            case 'copy-diagnostics': {
-                const report = this.controller.getDiagnosticsReport();
-                let copied = false;
-                try {
-                    await this.document.defaultView.navigator.clipboard.writeText(report);
-                    copied = true;
-                } catch {
-                    // Android HTTP origins may not expose the secure-context Clipboard API.
-                    const field = this.document.createElement('textarea');
-                    field.value = report;
-                    field.setAttribute('readonly', '');
-                    field.style.cssText = 'position:fixed;left:-9999px;top:0';
-                    this.document.body.appendChild(field);
-                    field.select();
-                    try { copied = Boolean(this.document.execCommand?.('copy')); } catch {}
-                    field.remove();
+            case 'copy-reply': {
+                const text = this.controller.getLatestReplyText();
+                if (!text) {
+                    this.setNotice('没有可复制的助手回复，或回复经过过滤后为空。');
+                    break;
                 }
-                this.setNotice(copied ? '完整日志已复制，不包含聊天正文。' : '浏览器禁止自动复制，请使用安全连接后重试。');
+                const copied = await this.copyText(text);
+                this.setNotice(copied
+                    ? '最新回复朗读纯文本已复制（' + Array.from(text).length + ' 字）。'
+                    : '浏览器禁止自动复制，请检查剪贴板权限。');
+                break;
+            }
+            case 'copy-diagnostics': {
+                const copied = await this.copyText(this.controller.getDiagnosticsReport());
+                this.setNotice(copied ? '完整日志已复制，不包含聊天正文。' : '浏览器禁止自动复制，请检查剪贴板权限。');
                 break;
             }
             case 'clear-diagnostics':
@@ -313,18 +356,11 @@ export class NarratorUI {
         this.settingsStore.update({ [name]: value });
     }
 
-    createMessagePlayButton(nativeNarrate, variant) {
-        const button = nativeNarrate?.cloneNode(true) || this.document.createElement('div');
-        button.removeAttribute('id');
-        button.removeAttribute('data-i18n');
-        button.removeAttribute('onclick');
-        button.style.removeProperty('display');
-        button.hidden = false;
-        button.tabIndex = 0;
-        button.setAttribute('role', 'button');
-        button.classList.remove('mes_narrate');
-        button.classList.add('mtn-message-play', 'mes_button', variant);
-        if (!button.matches('.fa-solid, .fa-regular')) button.classList.add('fa-solid', 'fa-bullhorn');
+    createMessagePlayButton(_nativeNarrate, variant) {
+        const button = this.document.createElement('button');
+        button.type = 'button';
+        button.className = 'mtn-message-play mes_button ' + variant;
+        button.innerHTML = iconSvg('speaker');
         button.title = '用 MultiTTS 播放此消息';
         button.setAttribute('aria-label', '用 MultiTTS 播放此消息');
         return button;
@@ -407,8 +443,8 @@ export class NarratorUI {
         progress.value = snapshot.total ? Math.max(0, snapshot.current - 1) : 0;
 
         const toggle = this.root.querySelector('[data-action="toggle"]');
-        toggle.classList.toggle('fa-play', snapshot.status !== 'playing');
-        toggle.classList.toggle('fa-pause', snapshot.status === 'playing');
+        toggle.dataset.icon = snapshot.status === 'playing' ? 'pause' : 'play';
+        this.renderIcons();
         this.root.querySelector('[data-action="previous"]').disabled = !snapshot.canPrevious;
         this.root.querySelector('[data-action="next"]').disabled = !snapshot.canNext;
         this.root.querySelector('[data-action="stop"]').disabled = !snapshot.canStop;

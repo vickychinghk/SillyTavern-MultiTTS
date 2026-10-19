@@ -93,3 +93,18 @@ test('skipping custom tag blocks does not delete visible HTML paragraph content'
     const input = '<think>hidden reasoning</think><p style="color: red">展示的文本。</p>';
     assert.equal(prepareNarrationText(input, { skipTagBlocks: true }), '展示的文本。');
 });
+
+test('content wrapper is preserved with and without custom-tag skipping', () => {
+    const input = '<thinking>隐私思考</thinking>\n「2026/09/05 周六 18:45｜某地」\n<content>\n第一段正文。\n\n第二段正文。\n</content>\n<details><summary>摘要</summary>不应朗读的概要。</details>';
+    for (const skipTagBlocks of [false, true]) {
+        const plain = prepareNarrationText(input, { skipTagBlocks });
+        assert.equal(plain.includes('隐私思考'), false);
+        assert.equal(plain.includes('不应朗读'), false);
+        assert.equal(plain.includes('<content>'), false);
+        assert.deepEqual(segmentNarrationText(plain, 1000), [
+            '「2026/09/05 周六 18:45｜某地」',
+            '第一段正文。',
+            '第二段正文。',
+        ]);
+    }
+});

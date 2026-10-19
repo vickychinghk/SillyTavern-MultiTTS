@@ -1,8 +1,8 @@
 # Project State
 
-**Line:** 2.0.0-alpha.4
-**Status:** Installable alpha; mobile playback acceptance pending
+**Line:** 2.0.0-alpha.5
+**Status:** Installable alpha; Android playback acceptance pending
 
-Alpha.4 consolidates player, settings and durable diagnostics into a draggable floating panel, measures cross-segment playback gaps and buffering, and excludes hidden HTML comments from narration while preserving visible styled paragraphs.
+Alpha.5 preserves narrative <content> blocks while excluding reasoning and <details> summaries, switches control icons to self-contained SVG, supports copying the latest processed assistant reply from the host API, and records source filter counts without persisting text.
 
 No runtime dependencies were added. Android in-app verification remains required before a stable release.

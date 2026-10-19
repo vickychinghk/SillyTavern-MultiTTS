@@ -13,3 +13,10 @@ Unit tests cover segmentation and HTML comments, bounded persistent diagnostics,
 5. Refresh and confirm logs persist, then copy the complete report; clear and confirm the journal resets. Review the endpoint metadata before sharing logs.
 
 No browser unit test substitutes for real device audio timing.
+
+## Alpha.5 regression
+
+- Paste an assistant reply with `<thinking>`, a timestamp outside tags, `<content>` containing multiple paragraphs, and `<details>`; verify only timestamp and narrative body are spoken with **跳过自定义标签内容** enabled and disabled.
+- On Android, verify headphones, close, previous, play/pause, stop, next, and per-message play show SVG icons (not tofu/X boxes).
+- In **日志**, copy the latest reply plain text and compare paragraph boundaries to the actual TTS segments; confirm diagnostics exports contain only lengths/settings/timing, never narrative text.
+- Verify clipboard fallback on an insecure HTTP origin and that copying does not change playback state.

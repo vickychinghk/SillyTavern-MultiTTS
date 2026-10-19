@@ -9,14 +9,14 @@ Lightweight narration extension for SillyTavern + Android MultiTTS. It uses its 
 3. Open **设置**, enable narration, and verify the MultiTTS address (default: `http://127.0.0.1:8774`).
 4. Run **测试语音服务**, then choose **播放最新回复** or the button beside an assistant message. Automatic narration is optional.
 
-Player, settings, and diagnostic log all live in the floating panel. The plugin does not add an extension settings drawer.
+Player, settings, and diagnostic log all live in the floating panel. Control icons are built-in SVGs and do not require Font Awesome or Tavern Helper. The plugin does not add an extension settings drawer.
 
 ## Playback and diagnostics
 
-- Visible paragraphs and styled text from mixed HTML/preset responses are narratable; hidden HTML comments are excluded.
+- Visible paragraphs and styled text from mixed HTML/preset responses are narratable; hidden HTML comments, reasoning blocks, and <details> summaries are excluded. Model <content> wrappers keep their narrative body even when custom-tag skipping is enabled.
 - Newlines and punctuation guide sentence segmentation (20–1000 characters).
 - Bounded concurrent preload, in-order playback, pause/resume, skip, retry, message changes, and checkpoint recovery are supported.
-- The **日志** tab shows the last 30 events; **复制完整日志** exports up to 2000 locally persisted events including segment loading, readiness, playback start/stop, gap timings, buffering and media state.
+- The **日志** tab shows the last 30 events. **复制最新回复纯文本** reads the latest assistant message from SillyTavern and copies the exact filtered plain text sent for segmentation, without storing it. **复制完整日志** exports up to 2000 locally persisted events including source filter character counts, segment timing and media state.
 - Diagnostics do **not** include chat text or synthesis URLs, but do include timing metadata and your configured endpoint. Review before sharing. **清空日志** erases the local journal.
 
 Android/Chrome can suspend or discard background pages. This browser extension cannot provide native Android foreground-service guarantees.

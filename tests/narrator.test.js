@@ -293,3 +293,14 @@ test('comment-only assistant replies report why nothing can be narrated', async 
     assert.equal(event.originalChars > 0, true);
     assert.equal(JSON.stringify(event).includes('hidden preset'), false);
 });
+
+test('copying the latest narration text follows the same filter as playback', async () => {
+    const text = '<thinking>hidden</thinking>「日期地点」<content>真正要朗读的正文。</content><details>概要</details>';
+    const { host, controller } = makeController(text, { skipTagBlocks: true });
+    assert.equal(controller.getLatestReplyText(), '「日期地点」\n真正要朗读的正文。');
+    await controller.narrateCandidate(host.candidate(), 'manual');
+    assert.deepEqual(controller.session.segments.map(s => s.text), ['「日期地点」', '真正要朗读的正文。']);
+    assert.ok(controller.diagnostics.some(item => item.event === 'source-prepared'
+        && item.inputChars > item.preparedChars && item.skipTagBlocks));
+    assert.equal(JSON.stringify(controller.diagnostics).includes('真正要朗读'), false);
+});

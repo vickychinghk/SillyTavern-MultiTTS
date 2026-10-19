@@ -8,11 +8,16 @@ const FALLBACK_RATIO = 0.6;
 // Remove non-spoken markup before segmentation, preserving text inside presentation tags.
 export function filterNarrationText(input, { skipCodeBlocks = false, skipTagBlocks = false } = {}) {
     let text = String(input ?? '').replace(/<!--[\s\S]*?-->/g, '');
+    // Reasoning and auxiliary details are not spoken, irrespective of optional custom-tag skipping.
+    text = text.replace(/<(thinking|think|analysis|reasoning|details)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
+    // Model replies often put their entire visible body in a <content> wrapper.
+    // Unwrap it BEFORE skipping custom tags, or only the outside timestamp survives.
+    text = text.replace(/<\/?content\b[^>]*>/gi, '\n');
     if (skipCodeBlocks) {
         text = text.replace(/```[\s\S]*?```/g, '').replace(/~~~[\s\S]*?~~~/g, '');
     }
     if (skipTagBlocks) {
-        // Skip semantic/custom blocks but retain visible HTML paragraphs and formatting.
+        // Skip arbitrary custom blocks, but preserve standard visible HTML.
         text = text.replace(/<(?!\/?(?:p|span|div|br|b|strong|em|i|u|blockquote|li|ul|ol|h[1-6])\b)([a-z][\w:-]*)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
     }
     return text.trim();
