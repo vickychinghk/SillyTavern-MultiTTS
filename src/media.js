@@ -29,6 +29,9 @@ export function buildForwardUrl(endpoint, text, settings) {
     return url.toString();
 }
 
+// Remember endpoints that cannot be fetched with CORS to avoid repeated duplicate requests.
+const STREAM_ONLY_ENDPOINTS = new Set();
+
 export class AudioSlot {
     constructor({ index, text, settings, onEvent, audioFactory = () => document.createElement('audio'), fetchFactory = globalThis.fetch?.bind(globalThis) ?? null }) {
         this.index = index;
@@ -74,6 +77,11 @@ export class AudioSlot {
         // A complete HTTP response is the only reliable client-side boundary
         // between consecutive TTS requests. 'canplay' may signal only 300 ms
         // of buffered streaming media, not completed synthesis.
+        const endpoint = normalizeEndpoint(this.settings.endpoint);
+        if (STREAM_ONLY_ENDPOINTS.has(endpoint)) {
+            this.loadDirect(url, 'known-cors-fallback');
+            return;
+        }
         if (typeof this.fetchFactory !== 'function' || !globalThis.URL?.createObjectURL) {
             this.loadDirect(url, 'fetch-unavailable');
             return;
@@ -96,8 +104,8 @@ export class AudioSlot {
             .catch(error => {
                 if (this.disposed || error?.name === 'AbortError') return;
                 if (error instanceof TypeError) {
-                    // Some localhost TTS servers allow <audio> but do not
-                    // set CORS headers for fetch(). Preserve compatibility.
+                    // Some localhost TTS servers allow <audio> but not fetch.
+                    STREAM_ONLY_ENDPOINTS.add(endpoint);
                     this.loadDirect(url, 'cors-or-network-fallback');
                 } else {
                     this.onEvent?.('error', this, { code: error?.message || 'fetch-failed' });
