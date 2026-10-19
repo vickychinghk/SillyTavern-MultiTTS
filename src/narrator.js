@@ -144,6 +144,15 @@ export class NarratorController {
         return candidate ? prepareNarrationText(candidate.text, this.settingsStore.get()) : null;
     }
 
+    // Generated on demand, never persisted in diagnostics or checkpoints.
+    getActiveSegmentText() {
+        const session = this.session;
+        if (!session) return null;
+        const width = String(session.segments.length).length;
+        return session.segments.map(item =>
+            '[' + String(item.index + 1).padStart(width, '0') + '] ' + item.text).join('\n');
+    }
+
     async narrateLatestManual() {
         return this.narrateManual(this.host.getLatestAssistantMessage());
     }
@@ -675,7 +684,7 @@ export class NarratorController {
             index: targetIndex, burstCount: this.navigationCount, cached: target.state === 'ready',
         });
         this.writeCheckpoint();
-        if (target.state === 'ready') {
+        if (target.state === 'ready' && this.navigationCount === 1) {
             this.navigationTimer = null;
             this.touchCache(session, target);
             this.tryPlay();
