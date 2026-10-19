@@ -30,11 +30,12 @@ export function buildForwardUrl(endpoint, text, settings) {
 }
 
 export class AudioSlot {
-    constructor({ index, text, settings, onEvent, audioFactory = () => document.createElement('audio') }) {
+    constructor({ index, text, settings, onEvent, audioFactory = () => document.createElement('audio'), fetchFactory = globalThis.fetch?.bind(globalThis) ?? null }) {
         this.index = index;
         this.text = text;
         this.settings = settings;
         this.onEvent = onEvent;
+        this.fetchFactory = fetchFactory;
         this.audio = audioFactory();
         this.disposed = false;
         this.ready = false;
@@ -73,12 +74,12 @@ export class AudioSlot {
         // A complete HTTP response is the only reliable client-side boundary
         // between consecutive TTS requests. 'canplay' may signal only 300 ms
         // of buffered streaming media, not completed synthesis.
-        if (typeof globalThis.fetch !== 'function' || !globalThis.URL?.createObjectURL) {
+        if (typeof this.fetchFactory !== 'function' || !globalThis.URL?.createObjectURL) {
             this.loadDirect(url, 'fetch-unavailable');
             return;
         }
         this.abortController = new AbortController();
-        globalThis.fetch(url, { signal: this.abortController.signal, cache: 'no-store' })
+        this.fetchFactory(url, { signal: this.abortController.signal, cache: 'no-store' })
             .then(async response => {
                 if (!response.ok) throw new Error('TTS HTTP ' + response.status);
                 const blob = await response.blob();
