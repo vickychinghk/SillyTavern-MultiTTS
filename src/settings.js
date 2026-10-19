@@ -15,7 +15,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
     pitch: 50,
     segmentChars: 70,
     lookAhead: 3,
-    maxInFlight: 3,
+    maxInFlight: 1,
+    loadTimeoutSec: 60,
     retryCount: 1,
     debug: false,
 });
@@ -39,7 +40,8 @@ export function normalizeSettings(raw = {}) {
         pitch: clamp(raw.pitch, 0, 100, DEFAULT_SETTINGS.pitch),
         segmentChars: Math.round(clamp(raw.segmentChars, 20, 1000, DEFAULT_SETTINGS.segmentChars)),
         lookAhead: Math.round(clamp(raw.lookAhead, 1, 5, DEFAULT_SETTINGS.lookAhead)),
-        maxInFlight: Math.round(clamp(raw.maxInFlight, 1, 5, DEFAULT_SETTINGS.maxInFlight)),
+        maxInFlight: 1, // Generation is intentionally serialized.
+        loadTimeoutSec: Math.round(clamp(raw.loadTimeoutSec, 30, 120, DEFAULT_SETTINGS.loadTimeoutSec)),
         retryCount: Math.round(clamp(raw.retryCount, 0, 1, DEFAULT_SETTINGS.retryCount)),
         debug: Boolean(raw.debug ?? DEFAULT_SETTINGS.debug),
     };

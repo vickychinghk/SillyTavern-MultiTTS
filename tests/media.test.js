@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildForwardUrl, isLoopbackEndpoint, normalizeEndpoint } from '../src/media.js';
+import { AudioSlot, buildForwardUrl, isLoopbackEndpoint, normalizeEndpoint } from '../src/media.js';
 import { normalizeSettings, settingsFingerprintInput } from '../src/settings.js';
 
 const settings = { sendProsodyParams: true, speed: 50, volume: 100, pitch: 50 };
@@ -41,4 +41,53 @@ test('loopback detection is strict', () => {
     assert.equal(isLoopbackEndpoint('http://127.0.0.1:8774'), true);
     assert.equal(isLoopbackEndpoint('http://localhost:8774'), true);
     assert.equal(isLoopbackEndpoint('https://example.com/tts'), false);
+});
+
+function fakeAudio() {
+    return {
+        src: '', loadCalls: 0, listeners: new Map(),
+        addEventListener(name, handler) { this.listeners.set(name, handler); },
+        removeEventListener(name) { this.listeners.delete(name); },
+        setAttribute() {}, removeAttribute(name) { if (name === 'src') this.src = ''; },
+        pause() {}, load() {
+            this.loadCalls++;
+            if (this.src.startsWith('blob:')) this.listeners.get('canplay')?.();
+        },
+    };
+}
+
+test('audio transport fully fetches bytes before marking the segment ready', async () => {
+    let resolveFetch;
+    const pending = new Promise(resolve => { resolveFetch = resolve; });
+    const audio = fakeAudio();
+    const observed = [];
+    const slot = new AudioSlot({
+        index: 0, text: '你好', settings: { endpoint: 'http://127.0.0.1:8774', sendProsodyParams: false },
+        audioFactory: () => audio, fetchFactory: () => pending,
+        onEvent: (type, _slot, detail) => observed.push({ type, detail }),
+    });
+    slot.load();
+    assert.equal(audio.loadCalls, 0);
+    assert.equal(observed.some(x => x.type === 'ready'), false);
+    resolveFetch({ ok: true, blob: async () => new Blob(['audio-bytes'], { type: 'audio/mpeg' }) });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(audio.loadCalls, 1);
+    assert.ok(observed.some(x => x.type === 'transport' && x.detail.mode === 'complete-blob'));
+    assert.ok(observed.some(x => x.type === 'ready'));
+    slot.dispose();
+});
+
+test('servers without browser fetch CORS retain native audio fallback', async () => {
+    const audio = fakeAudio();
+    const observed = [];
+    const slot = new AudioSlot({
+        index: 0, text: '你好', settings: { endpoint: 'http://127.0.0.1:8774', sendProsodyParams: false },
+        audioFactory: () => audio, fetchFactory: () => Promise.reject(new TypeError('CORS unavailable')),
+        onEvent: (type, _slot, detail) => observed.push({ type, detail }),
+    });
+    slot.load();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(audio.loadCalls, 1);
+    assert.ok(observed.some(x => x.type === 'transport' && x.detail.mode === 'stream-fallback'));
+    slot.dispose();
 });

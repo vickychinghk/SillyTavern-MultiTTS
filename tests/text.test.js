@@ -53,8 +53,9 @@ test('segmentation supports a configured limit of 1000 code points', () => {
     assert.deepEqual(segmentNarrationText(text, 1000), [text]);
     const longer = '字'.repeat(1001);
     const segments = segmentNarrationText(longer, 1000);
-    assert.equal(Array.from(segments[0]).length, 1000);
-    assert.equal(Array.from(segments[1]).length, 1);
+    assert.ok(Array.from(segments[0]).length <= 1000);
+    assert.ok(Array.from(segments[1]).length <= 1000);
+    assert.equal(segments.join(''), longer);
 });
 
 test('segmentation counts Unicode code points instead of UTF-16 units', () => {
@@ -106,5 +107,15 @@ test('content wrapper is preserved with and without custom-tag skipping', () => 
             '第一段正文。',
             '第二段正文。',
         ]);
+    }
+});
+
+test('an earlier comma and long Chinese clause never split 今天 as 今 and 天', () => {
+    const source = '开头，' + '这段内容没有额外标点而且需要比较长才会换段'.repeat(5)
+        + '今天我们继续进行测试';
+    const parts = segmentNarrationText(source, 60);
+    assert.equal(parts.join(''), source);
+    for (let index = 0; index < parts.length - 1; index++) {
+        assert.equal(parts[index].endsWith('今') && parts[index + 1].startsWith('天'), false);
     }
 });

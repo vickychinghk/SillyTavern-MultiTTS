@@ -5,6 +5,9 @@ import { normalizeEndpoint, updateMediaSessionState } from './media.js';
 const CHECKPOINT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const CIRCUIT_WINDOW_MS = 30_000;
 const HEALTH_TIMEOUT_MS = 20_000;
+const NAVIGATION_BURST_MS = 2_000;
+const SINGLE_NAVIGATION_MS = 300;
+const CACHE_LIMIT = 12;
 
 function makeId() {
     return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -32,6 +35,10 @@ export class NarratorController {
         this.diagnostics = diagnosticsStore?.read() ?? [];
         this.healthBusy = false;
         this.disposed = false;
+        this.navigationTimer = null;
+        this.lastNavigationAt = -Infinity;
+        this.navigationCount = 0;
+        this.cacheTick = 0;
         this.settingsUnsubscribe = this.settingsStore.subscribe(settings => {
             if (!settings.enabled && this.session) this.stop();
             this.emit();
@@ -137,6 +144,15 @@ export class NarratorController {
         return candidate ? prepareNarrationText(candidate.text, this.settingsStore.get()) : null;
     }
 
+    // Generated on demand, never persisted in diagnostics or checkpoints.
+    getActiveSegmentText() {
+        const session = this.session;
+        if (!session) return null;
+        const width = String(session.segments.length).length;
+        return session.segments.map(item =>
+            '[' + String(item.index + 1).padStart(width, '0') + '] ' + item.text).join('\n');
+    }
+
     async narrateLatestManual() {
         return this.narrateManual(this.host.getLatestAssistantMessage());
     }
@@ -226,6 +242,8 @@ export class NarratorController {
                 waitingAt: null,
                 stalledMs: 0,
                 lastProgressAt: null,
+                timeoutId: null,
+                lastUsed: 0,
             })),
             currentIndex,
             currentTime: Number(restore?.currentTime) || 0,
@@ -259,15 +277,60 @@ export class NarratorController {
         return true;
     }
 
+    // At most one request at a time. The selected segment always loads first.
     fillWindow() {
         const session = this.session;
-        if (!session || this.disposed || session.breakerOpen || this.status === 'action-required') return;
-        const inFlight = () => session.segments.filter(segment => segment.state === 'loading').length;
-        const windowEnd = Math.min(session.segments.length, session.currentIndex + 1 + session.settings.lookAhead);
+        if (!session || this.disposed || this.navigationTimer !== null ||
+            session.breakerOpen || this.status === 'action-required') return;
+        if (session.segments.some(item => item.state === 'loading')) return;
+        const current = session.segments[session.currentIndex];
+        if (!current) return;
+        if (current.state === 'queued') {
+            this.loadSegment(session, current);
+            return;
+        }
+        if (!['ready', 'playing', 'ended'].includes(current.state)) return;
+        const end = Math.min(session.segments.length, session.currentIndex + 1 + session.settings.lookAhead);
+        for (let index = session.currentIndex + 1; index < end; index++) {
+            if (session.segments[index].state === 'queued') {
+                this.loadSegment(session, session.segments[index]);
+                return;
+            }
+        }
+    }
 
-        for (let index = session.currentIndex; index < windowEnd && inFlight() < session.settings.maxInFlight; index++) {
-            const segment = session.segments[index];
-            if (segment.state === 'queued') this.loadSegment(session, segment);
+    clearLoadTimeout(segment) {
+        if (segment.timeoutId != null) clearTimeout(segment.timeoutId);
+        segment.timeoutId = null;
+    }
+
+    cancelLoading(segment, reason = 'navigation') {
+        if (segment.state !== 'loading') return;
+        this.clearLoadTimeout(segment);
+        segment.slot?.dispose();
+        segment.slot = null;
+        segment.state = 'queued';
+        segment.loadStartedAt = null;
+        segment.readyAt = null;
+        segment.attempts = 0;
+        this.record('segment-load-canceled', { index: segment.index, reason });
+    }
+
+    touchCache(session, segment) {
+        segment.lastUsed = ++this.cacheTick;
+        const cached = session.segments.filter(item => item.slot && item.state !== 'loading'
+            && item.index !== session.currentIndex && item.state !== 'playing')
+            .sort((a, b) => a.lastUsed - b.lastUsed);
+        let total = cached.length + (session.segments[session.currentIndex]?.slot ? 1 : 0);
+        while (total > CACHE_LIMIT && cached.length) {
+            const item = cached.shift();
+            item.slot.dispose();
+            item.slot = null;
+            item.state = 'queued';
+            item.readyAt = null;
+            item.attempts = 0;
+            total--;
+            this.record('segment-cache-evicted', { index: item.index });
         }
     }
 
@@ -276,6 +339,8 @@ export class NarratorController {
         segment.attempts += 1;
         segment.state = 'loading';
         segment.loadStartedAt = this.now();
+        segment.waitingAt = null;
+        segment.stalledMs = 0;
         const sessionId = session.id;
         const generation = session.generation;
         const slot = this.mediaFactory({
@@ -288,6 +353,13 @@ export class NarratorController {
         this.record('segment-load', { index: segment.index, attempt: segment.attempts, length: segment.length, readyState: slot.getState?.().readyState ?? null });
         try {
             slot.load();
+            const timeoutMs = (session.settings.loadTimeoutSec || 60) * 1000;
+            segment.timeoutId = setTimeout(() => {
+                if (this.session !== session || segment.slot !== slot || segment.state !== 'loading') return;
+                this.record('segment-load-timeout', { index: segment.index, timeoutMs, attempt: segment.attempts });
+                this.handleSegmentError(session, segment, { code: 'timeout' });
+            }, timeoutMs);
+            segment.timeoutId?.unref?.();
         } catch {
             this.onSlotEvent(sessionId, generation, segment.index, 'error', slot, { code: null });
         }
@@ -299,8 +371,17 @@ export class NarratorController {
         const segment = session.segments[index];
         if (!segment || segment.slot !== slot) return;
 
+        if (type === 'transport') {
+            this.record('segment-transport', {
+                index, mode: detail?.mode ?? null, reason: detail?.reason ?? null,
+                bytes: detail?.bytes ?? null,
+            });
+            return;
+        }
+
         if (type === 'ready') {
             if (segment.state !== 'loading') return;
+            this.clearLoadTimeout(segment);
             segment.state = 'ready';
             segment.readyAt = this.now();
             this.record('segment-ready', {
@@ -309,8 +390,9 @@ export class NarratorController {
                 loadMs: segment.loadStartedAt == null ? null : segment.readyAt - segment.loadStartedAt,
                 media: slot.getState?.() ?? null,
             });
-            this.fillWindow();
             this.tryPlay();
+            this.touchCache(session, segment);
+            this.fillWindow();
             return;
         }
 
@@ -318,11 +400,11 @@ export class NarratorController {
             const at = this.now();
             if (type === 'progress' && segment.lastProgressAt !== null && at - segment.lastProgressAt < 2000) return;
             if (type === 'progress') segment.lastProgressAt = at;
-            if (['waiting', 'stalled'].includes(type)) {
-                if (segment.playingAt !== null) {
-                    segment.playedMs += at - segment.playingAt;
-                    segment.playingAt = null;
-                }
+            // Background media stalls are not audible playback stalls.
+            if (['waiting', 'stalled'].includes(type) && index === session.currentIndex
+                && segment.playingAt !== null) {
+                segment.playedMs += at - segment.playingAt;
+                segment.playingAt = null;
                 if (segment.waitingAt === null) segment.waitingAt = at;
             }
             this.record('media-' + type, { index, media: slot.getState?.() ?? null });
@@ -368,8 +450,8 @@ export class NarratorController {
             const media = slot.getState?.() ?? null;
             session.lastSegmentEndedAt = at;
             segment.state = 'ended';
-            segment.slot?.dispose();
-            segment.slot = null;
+            segment.slot?.seek(0);
+            this.touchCache(session, segment);
             session.playRequestIndex = null;
             session.currentIndex += 1;
             session.currentTime = 0;
@@ -390,6 +472,7 @@ export class NarratorController {
     }
 
     handleSegmentError(session, segment, detail) {
+        this.clearLoadTimeout(segment);
         segment.slot?.dispose();
         segment.slot = null;
         session.playRequestIndex = null;
@@ -556,93 +639,89 @@ export class NarratorController {
     }
 
     previous() {
-        const session = this.session;
-        if (!session || session.currentIndex <= 0) return false;
-
-        const current = session.segments[session.currentIndex];
-        if (current?.slot && current.state === 'playing') {
-            current.slot.pause();
-            current.slot.seek(0);
-            current.state = 'ready';
-        } else if (current?.state === 'loading') {
-            current.slot?.dispose();
-            current.slot = null;
-            current.state = 'queued';
-            current.attempts = 0;
-            current.loadStartedAt = null;
-            current.readyAt = null;
-        } else if (current?.state === 'error') {
-            current.slot?.dispose();
-            current.slot = null;
-            current.state = 'queued';
-            current.attempts = 0;
-        }
-
-        const targetIndex = session.currentIndex - 1;
-        const target = session.segments[targetIndex];
-        target.slot?.dispose();
-        target.slot = null;
-        target.state = 'queued';
-        target.attempts = 0;
-        target.loadStartedAt = null;
-        target.readyAt = null;
-
-        session.currentIndex = targetIndex;
-        session.currentTime = 0;
-        session.resumeTime = 0;
-        session.playRequestIndex = null;
-        session.breakerOpen = false;
-        session.recentFailures = [];
-        this.status = 'buffering';
-        this.reason = null;
-        this.record('segment-previous', { index: targetIndex });
-        session.lastSegmentEndedAt = null;
-        this.writeCheckpoint();
-        this.fillWindow();
-        this.tryPlay();
-        this.emit();
-        return true;
+        return this.navigate(-1);
     }
 
     next() {
-        return this.skip();
+        return this.navigate(1);
     }
 
     skip() {
+        return this.navigate(1);
+    }
+
+    // A single click settles quickly; a burst gets a 2-second quiet-period
+    // debounce. Intermediate targets never issue TTS requests.
+    navigate(direction) {
         const session = this.session;
         if (!session) return false;
-        const segment = session.segments[session.currentIndex];
-        if (!segment) return false;
-        segment.slot?.pause();
-        segment.slot?.dispose();
-        segment.slot = null;
-        segment.state = 'skipped';
-        session.currentIndex += 1;
+        const targetIndex = session.currentIndex + direction;
+        if (targetIndex < 0 || targetIndex >= session.segments.length) return false;
+        if (this.navigationTimer !== null) clearTimeout(this.navigationTimer);
+        // Block callbacks from scheduling speculative work while canceling.
+        this.navigationTimer = -1;
+        const current = session.segments[session.currentIndex];
+        if (current.state === 'playing') {
+            current.slot?.pause();
+            current.slot?.seek(0);
+            current.playingAt = null;
+            current.state = current.slot ? 'ready' : 'queued';
+        }
+        for (const item of session.segments) {
+            if (item.state === 'loading') this.cancelLoading(item);
+        }
+
+        const now = Date.now();
+        this.navigationCount = now - this.lastNavigationAt < NAVIGATION_BURST_MS
+            ? this.navigationCount + 1 : 1;
+        this.lastNavigationAt = now;
+        session.currentIndex = targetIndex;
+        const target = session.segments[targetIndex];
+        if (['ended', 'skipped', 'canceled'].includes(target.state)) {
+            target.state = target.slot ? 'ready' : 'queued';
+        }
         session.currentTime = 0;
         session.resumeTime = 0;
         session.playRequestIndex = null;
         session.breakerOpen = false;
         session.recentFailures = [];
-        this.record('segment-skipped', { index: segment.index });
         session.lastSegmentEndedAt = null;
-        if (session.currentIndex >= session.segments.length) {
-            this.completeSession(session);
-            return true;
-        }
         this.status = 'buffering';
         this.reason = null;
+        this.record('segment-navigation', {
+            index: targetIndex, burstCount: this.navigationCount, cached: target.state === 'ready',
+        });
         this.writeCheckpoint();
-        this.fillWindow();
-        this.tryPlay();
+        if (target.state === 'ready' && this.navigationCount === 1) {
+            this.navigationTimer = null;
+            this.touchCache(session, target);
+            this.tryPlay();
+            this.fillWindow();
+        } else {
+            const delay = this.navigationCount > 1 ? NAVIGATION_BURST_MS : SINGLE_NAVIGATION_MS;
+            this.navigationTimer = setTimeout(() => {
+                this.navigationTimer = null;
+                if (this.session !== session) return;
+                this.record('segment-navigation-settled', { index: session.currentIndex });
+                this.fillWindow();
+                this.tryPlay();
+            }, delay);
+            this.navigationTimer?.unref?.();
+        }
         this.emit();
         return true;
     }
 
     async stop({ clearPending = true, silent = false } = {}) {
+        if (this.navigationTimer !== null) clearTimeout(this.navigationTimer);
+        this.navigationTimer = null;
+        this.navigationCount = 0;
+        this.lastNavigationAt = -Infinity;
         const session = this.session;
         if (session) {
             session.generation += 1;
             for (const segment of session.segments) {
+                this.clearLoadTimeout(segment);
                 segment.slot?.dispose();
                 segment.slot = null;
                 if (!['ended', 'skipped'].includes(segment.state)) segment.state = 'canceled';
@@ -661,6 +740,7 @@ export class NarratorController {
     async completeSession(session) {
         if (this.session !== session) return;
         for (const segment of session.segments) {
+            this.clearLoadTimeout(segment);
             segment.slot?.dispose();
             segment.slot = null;
         }
@@ -845,7 +925,7 @@ export class NarratorController {
         try { endpoint = normalizeEndpoint(settings.endpoint); } catch {}
         return JSON.stringify({
             product: 'MultiTTS Narrator',
-            version: '2.0.0-alpha.4',
+            version: '2.0.0-alpha.6',
             generatedAt: new Date(this.now()).toISOString(),
             state: this.getSnapshot(),
             settings: {
@@ -860,6 +940,7 @@ export class NarratorController {
                 lookAhead: settings.lookAhead,
                 maxInFlight: settings.maxInFlight,
                 retryCount: settings.retryCount,
+                loadTimeoutSec: settings.loadTimeoutSec,
             },
             events: this.diagnosticsStore?.read() ?? this.diagnostics,
         }, null, 2);
