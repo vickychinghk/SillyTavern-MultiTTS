@@ -383,11 +383,11 @@ export class NarratorController {
             const at = this.now();
             if (type === 'progress' && segment.lastProgressAt !== null && at - segment.lastProgressAt < 2000) return;
             if (type === 'progress') segment.lastProgressAt = at;
-            if (['waiting', 'stalled'].includes(type)) {
-                if (segment.playingAt !== null) {
-                    segment.playedMs += at - segment.playingAt;
-                    segment.playingAt = null;
-                }
+            // Background media stalls are not audible playback stalls.
+            if (['waiting', 'stalled'].includes(type) && index === session.currentIndex
+                && segment.playingAt !== null) {
+                segment.playedMs += at - segment.playingAt;
+                segment.playingAt = null;
                 if (segment.waitingAt === null) segment.waitingAt = at;
             }
             this.record('media-' + type, { index, media: slot.getState?.() ?? null });
