@@ -217,6 +217,8 @@ test('previous segment replays cached audio and retains the next segment', async
     controller.next();
     await Promise.resolve();
     assert.equal(controller.session.currentIndex, 1);
+    // Simulate a later, single navigation rather than a rapid-jump burst.
+    controller.lastNavigationAt = -Infinity;
     controller.previous();
     await Promise.resolve();
     assert.equal(controller.session.currentIndex, 0);
@@ -308,4 +310,14 @@ test('rapid jumps do not synthesize discarded intermediate targets', async () =>
     assert.equal(slots.at(-1).index, 3);
     assert.deepEqual(slots.map(s => s.index), [0, 3]);
     await controller.stop();
+});
+
+test('diagnostic segment export reflects exact current session boundaries', async () => {
+    const { host, controller } = makeController('第一句。第二句。');
+    await controller.narrateCandidate(host.candidate(), 'manual');
+    const text = controller.getActiveSegmentText();
+    assert.ok(text.includes('[1]'));
+    assert.ok(text.includes('第一句。'));
+    await controller.stop();
+    assert.equal(controller.getActiveSegmentText(), null);
 });
