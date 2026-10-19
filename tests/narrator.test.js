@@ -66,19 +66,18 @@ function makeController(text, overrides = {}) {
 
 const byIndex = (slots, index) => [...slots].reverse().find(slot => slot.index === index && !slot.disposed);
 
-test('out-of-order readiness still plays strictly in order', async () => {
+test('selected audio loads first and later segments are requested serially', async () => {
     const { host, slots, controller } = makeController('甲甲甲甲甲甲甲甲甲甲甲。乙乙乙乙乙乙乙乙乙乙乙。丙丙丙丙丙丙丙丙丙丙丙。');
     await controller.narrateCandidate(host.candidate(), 'manual');
-    assert.ok(slots.length >= 2);
-    const first = byIndex(slots, 0);
-    const second = byIndex(slots, 1);
-    second.emit('ready');
-    assert.notEqual(controller.getSnapshot().status, 'playing');
-    first.emit('ready');
+    assert.deepEqual(slots.map(s => s.index), [0]);
+    slots[0].emit('ready');
     await Promise.resolve();
     assert.equal(controller.getSnapshot().status, 'playing');
+    assert.deepEqual(slots.map(s => s.index), [0, 1]);
+    slots[1].emit('ready');
+    assert.deepEqual(slots.map(s => s.index), [0, 1, 2]);
     assert.equal(controller.session.currentIndex, 0);
-    first.emit('ended');
+    slots[0].emit('ended');
     await Promise.resolve();
     assert.equal(controller.session.currentIndex, 1);
     assert.equal(controller.getSnapshot().status, 'playing');
@@ -141,14 +140,14 @@ test('automatic narration keeps only the latest pending reply', async () => {
     assert.equal(controller.getSnapshot().pendingAuto, true);
 });
 
-test('future segment failure does not falsely mark current playing audio as stopped', async () => {
+test('future segment failure does not interrupt the current playback', async () => {
     const { host, slots, controller } = makeController('甲甲甲甲甲甲甲甲甲甲甲。乙乙乙乙乙乙乙乙乙乙乙。丙丙丙丙丙丙丙丙丙丙丙。', { retryCount: 0 });
     await controller.narrateCandidate(host.candidate(), 'manual');
-    const first = byIndex(slots, 0);
-    const second = byIndex(slots, 1);
-    first.emit('ready');
+    slots[0].emit('ready');
     await Promise.resolve();
     assert.equal(controller.getSnapshot().status, 'playing');
+    const second = byIndex(slots, 1);
+    assert.ok(second);
     second.emit('error', { code: 4 });
     assert.equal(controller.getSnapshot().status, 'playing');
 });
@@ -192,67 +191,57 @@ test('manual narration can target an older assistant message', async () => {
     assert.equal(controller.session.source.text, 'older reply');
 });
 
-test('next segment reuses an already prepared slot', async () => {
+test('next segment reuses already prepared audio without new TTS request', async () => {
     const { host, slots, controller } = makeController('甲甲甲甲甲甲甲甲甲甲甲。乙乙乙乙乙乙乙乙乙乙乙。');
     await controller.narrateCandidate(host.candidate(), 'manual');
     const first = byIndex(slots, 0);
-    const second = byIndex(slots, 1);
     first.emit('ready');
+    const second = byIndex(slots, 1);
     second.emit('ready');
     await Promise.resolve();
-    assert.equal(controller.session.currentIndex, 0);
     assert.equal(controller.next(), true);
     await Promise.resolve();
     assert.equal(controller.session.currentIndex, 1);
     assert.equal(controller.getSnapshot().status, 'playing');
     assert.equal(second.disposed, false);
+    assert.equal(slots.length, 2);
 });
 
-test('previous segment reloads only the previous audio and keeps prepared current audio', async () => {
+test('previous segment replays cached audio and retains the next segment', async () => {
     const { host, slots, controller } = makeController('甲甲甲甲甲甲甲甲甲甲甲。乙乙乙乙乙乙乙乙乙乙乙。');
     await controller.narrateCandidate(host.candidate(), 'manual');
-    const first = byIndex(slots, 0);
-    const second = byIndex(slots, 1);
+    const first = slots[0];
     first.emit('ready');
+    const second = byIndex(slots, 1);
     second.emit('ready');
-    await Promise.resolve();
     controller.next();
     await Promise.resolve();
     assert.equal(controller.session.currentIndex, 1);
-
-    assert.equal(controller.previous(), true);
-    const replayedFirst = byIndex(slots, 0);
-    assert.notEqual(replayedFirst, first);
-    assert.equal(second.disposed, false);
-    assert.equal(controller.session.segments[1].state, 'ready');
-
-    replayedFirst.emit('ready');
+    controller.previous();
     await Promise.resolve();
     assert.equal(controller.session.currentIndex, 0);
     assert.equal(controller.getSnapshot().status, 'playing');
+    assert.equal(byIndex(slots, 0), first);
+    assert.equal(second.disposed, false);
+    assert.equal(slots.length, 2);
 });
 
-
-test('previous segment gets loading priority while current segment is still buffering', async () => {
-    const { host, slots, controller } = makeController('甲甲甲甲甲甲甲甲甲甲甲。乙乙乙乙乙乙乙乙乙乙乙。', { maxInFlight: 2 });
+test('previous cached segment preempts an in-progress future load', async () => {
+    const { host, slots, controller } = makeController('甲甲甲甲甲甲甲甲甲甲甲。乙乙乙乙乙乙乙乙乙乙乙。');
     await controller.narrateCandidate(host.candidate(), 'manual');
-    const first = byIndex(slots, 0);
-    const second = byIndex(slots, 1);
+    const first = slots[0];
     first.emit('ready');
-    await Promise.resolve();
+    const second = byIndex(slots, 1);
+    assert.equal(controller.session.segments[1].state, 'loading');
     first.emit('ended');
     await Promise.resolve();
-    assert.equal(controller.session.currentIndex, 1);
-    assert.equal(controller.session.segments[1].state, 'loading');
-
-    assert.equal(controller.previous(), true);
+    controller.previous();
+    await Promise.resolve();
     assert.equal(second.disposed, true);
-    const replayedFirst = byIndex(slots, 0);
-    assert.notEqual(replayedFirst, first);
     assert.equal(controller.session.currentIndex, 0);
-    assert.equal(controller.session.segments[0].state, 'loading');
+    assert.equal(byIndex(slots, 0), first);
+    assert.equal(controller.getSnapshot().status, 'playing');
 });
-
 
 test('narration filters code and tagged blocks before segmentation', async () => {
     const text = '开头。\n\`\`\`js\nsecretCode();\n\`\`\`\n<Tag>秘密标签内容</Tag>\n结尾。';
@@ -263,12 +252,13 @@ test('narration filters code and tagged blocks before segmentation', async () =>
     assert.deepEqual(controller.session.segments.map(segment => segment.text), ['开头。', '结尾。']);
 });
 
-test('diagnostics include the real next-segment gap and buffer wait', async () => {
+test('diagnostics distinguish real current playback stalls from background load stalls', async () => {
     const { host, slots, controller } = makeController('甲甲甲甲甲甲甲甲甲甲甲。乙乙乙乙乙乙乙乙乙乙乙。');
     await controller.narrateCandidate(host.candidate(), 'manual');
-    const first = byIndex(slots, 0);
-    const second = byIndex(slots, 1);
+    const first = slots[0];
     first.emit('ready');
+    const second = byIndex(slots, 1);
+    second.emit('stalled');
     second.emit('ready');
     await Promise.resolve();
     first.emit('waiting');
@@ -280,7 +270,7 @@ test('diagnostics include the real next-segment gap and buffer wait', async () =
     assert.ok(Number.isFinite(nextStarted.gapMs));
     assert.ok(Number.isFinite(nextStarted.startDelayMs));
     assert.ok(controller.diagnostics.some(event => event.event === 'media-waiting' && event.index === 0));
-    assert.ok(controller.diagnostics.some(event => event.event === 'segment-ready' && event.index === 1 && Number.isFinite(event.loadMs)));
+    assert.equal(nextStarted.stalledMs, 0);
 });
 
 test('comment-only assistant replies report why nothing can be narrated', async () => {
@@ -303,4 +293,19 @@ test('copying the latest narration text follows the same filter as playback', as
     assert.ok(controller.diagnostics.some(item => item.event === 'source-prepared'
         && item.inputChars > item.preparedChars && item.skipTagBlocks));
     assert.equal(JSON.stringify(controller.diagnostics).includes('真正要朗读'), false);
+});
+
+// A burst of navigation should coalesce into one synthesis request.
+test('rapid jumps do not synthesize discarded intermediate targets', async () => {
+    const { host, slots, controller } = makeController('这是一句完整的测试。'.repeat(28));
+    await controller.narrateCandidate(host.candidate(), 'manual');
+    assert.equal(slots.length, 1);
+    controller.next();
+    controller.next();
+    controller.next();
+    assert.equal(slots.length, 1);
+    await new Promise(resolve => setTimeout(resolve, 2100));
+    assert.equal(slots.at(-1).index, 3);
+    assert.deepEqual(slots.map(s => s.index), [0, 3]);
+    await controller.stop();
 });
